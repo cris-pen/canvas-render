@@ -1,0 +1,6 @@
+node_modules/
+dist/
+release/
+.canvas-render/
+*.log
+.DS_Store

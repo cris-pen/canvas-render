@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; connect-src 'self'">
+<title>Canvas Render</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header class="titlebar">
+    <div class="brand"><span class="logo" aria-hidden="true"></span>Canvas Render</div>
+    <nav class="tabs" id="tabs" aria-label="Open projects"></nav>
+    <button class="ghost" id="open-btn" type="button">Open…</button>
+    <div class="tools" id="tools" aria-live="polite"></div>
+  </header>
+
+  <div class="setup" id="setup" hidden></div>
+
+  <main class="workspace" id="workspace">
+    <section class="panel scenes" aria-label="Scenes">
+      <div class="panel-head">
+        <h2>Scenes</h2>
+        <span class="count" id="scene-count"></span>
+      </div>
+      <ul class="scene-list" id="scene-list"></ul>
+      <p class="carry" id="carry" hidden></p>
+    </section>
+
+    <section class="viewer-wrap" aria-label="Preview">
+      <div class="viewer" id="viewer">
+        <div class="frame" id="frame">
+          <img id="preview" alt="">
+          <div class="frame-msg" id="frame-msg"></div>
+        </div>
+        <div class="drop" id="drop">
+          <div class="drop-inner">
+            <div class="drop-mark" aria-hidden="true"></div>
+            <h1>Drop a Claude Design export</h1>
+            <p>A project .zip, a standalone .html, any HTML animation, or a folder.</p>
+            <button class="primary" id="drop-open" type="button">Open file…</button>
+            <div class="recent" id="recent"></div>
+          </div>
+        </div>
+      </div>
+      <div class="transport" id="transport">
+        <div class="tc" id="tc" title="Current frame">00:00:00:00</div>
+        <div class="steps">
+          <button class="icon" data-act="start" type="button" title="Go to in point (Shift+I)" aria-label="Go to in point">⇤</button>
+          <button class="icon" data-act="back" type="button" title="Back one frame (Left arrow)" aria-label="Back one frame">◂</button>
+          <button class="icon" data-act="fwd" type="button" title="Forward one frame (Right arrow)" aria-label="Forward one frame">▸</button>
+          <button class="icon" data-act="end" type="button" title="Go to out point (Shift+O)" aria-label="Go to out point">⇥</button>
+        </div>
+        <div class="marks">
+          <button class="mark" data-act="in" type="button" title="Mark in (I)">Mark in</button>
+          <button class="mark" data-act="out" type="button" title="Mark out (O)">Mark out</button>
+          <button class="ghost small" data-act="clear" type="button" title="Clear in and out (Alt+X)">Clear</button>
+        </div>
+        <div class="range" id="range"></div>
+      </div>
+      <div class="ruler" id="ruler" tabindex="0" role="slider" aria-label="Playhead" aria-valuemin="0">
+        <canvas id="ticks"></canvas>
+        <div class="inout" id="inout"></div>
+        <div class="sections" id="sections"></div>
+        <div class="playhead" id="playhead"><span></span></div>
+      </div>
+    </section>
+
+    <section class="panel output" aria-label="Output">
+      <div class="panel-head"><h2>Output</h2></div>
+      <div class="output-scroll">
+      <div class="presets" id="presets" role="radiogroup" aria-label="Presets"></div>
+      <form class="fields" id="fields" autocomplete="off">
+        <label class="field"><span>Format</span><select name="format" id="f-format"></select></label>
+        <label class="field"><span>Frame rate</span><select name="rate" id="f-rate"></select></label>
+        <div class="field">
+          <span>Size</span>
+          <div class="seg" id="f-size" role="radiogroup" aria-label="Size">
+            <button type="button" data-size="native">Native</button>
+            <button type="button" data-size="half">50%</button>
+            <button type="button" data-size="hd">1080</button>
+            <button type="button" data-size="uhd">2160</button>
+          </div>
+          <small class="hint" id="size-hint"></small>
+        </div>
+        <label class="check"><input type="checkbox" name="transparent" id="f-transparent"> <span>Transparent background</span></label>
+        <small class="hint indent" id="alpha-hint"></small>
+        <label class="check"><input type="checkbox" name="blur" id="f-blur"> <span>Motion blur</span></label>
+        <div class="blur-opts" id="blur-opts">
+          <label class="mini"><span>Shutter</span><input type="number" id="f-shutter" min="1" max="720" step="15"><em>°</em></label>
+          <label class="mini"><span>Samples</span><select id="f-samples"><option>4</option><option>8</option><option>16</option><option>32</option></select></label>
+        </div>
+        <label class="check" id="review-row"><input type="checkbox" name="review" id="f-review"> <span>H.264 review copy</span></label>
+        <label class="check"><input type="checkbox" name="xml" id="f-xml"> <span>Timeline XML for Premiere and Resolve</span></label>
+        <label class="check"><input type="checkbox" name="partial" id="f-partial"> <span>Re-render only what changed</span></label>
+        <div class="field folder">
+          <span>Save to</span>
+          <div class="folder-row">
+            <input type="text" id="f-outdir" spellcheck="false" aria-label="Output folder">
+            <button class="ghost small" id="pick-folder" type="button">Choose…</button>
+          </div>
+        </div>
+      </form>
+      </div>
+      <div class="go">
+        <button class="primary big" id="render-btn" type="button" disabled>Render</button>
+        <p class="go-hint" id="go-hint"></p>
+      </div>
+    </section>
+  </main>
+
+  <section class="queue" aria-label="Render queue">
+    <div class="queue-head">
+      <h2>Queue</h2>
+      <span class="empty" id="queue-empty">Renders show up here.</span>
+      <button class="ghost small" id="clear-done" type="button">Clear finished</button>
+    </div>
+    <div class="queue-list" id="queue-list"></div>
+  </section>
+</div>
+<input type="file" id="file-input" accept=".zip,.html,.htm" hidden>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="app.js" type="module"></script>
+</body>
+</html>

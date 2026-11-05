@@ -1,0 +1,53 @@
+<!doctype html>
+<!-- A clean-room stand-in for a Claude Design board export. It follows the
+     exportable-video contract: a stage element with width, height and
+     data-om-exportable-video-with-duration-secs, scaled to fit the window,
+     that redraws on the data-om-seek-to-time-frame event. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Lower Third</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #16181d; overflow: hidden; }
+  #stage { position: absolute; left: 50%; top: 50%; transform-origin: 0 0; }
+  .wrap { width: 640px; height: 360px; position: relative; font: 600 28px/1 system-ui, sans-serif; }
+  #bar { position: absolute; left: 0; top: 230px; width: 120px; height: 72px; background: #ff3366; }
+  #name { position: absolute; left: 140px; top: 250px; color: #fff; opacity: 0; }
+</style>
+</head>
+<body>
+<svg id="stage" width="640" height="360" data-om-exportable-video-with-duration-secs="2" data-om-sync-seek="true" data-om-fonts-inlined="true">
+  <foreignObject width="640" height="360">
+    <div xmlns="http://www.w3.org/1999/xhtml" class="wrap">
+      <div id="bar"></div>
+      <div id="name">Jordan Avery</div>
+    </div>
+  </foreignObject>
+</svg>
+<script>
+  window.OM_SCENES = JSON.stringify([
+    { name: 'Bar in', dur: 1, desc: 'The bar slides across.' },
+    { name: 'Name', dur: 1, desc: 'The name fades up.' },
+  ]);
+  const stage = document.getElementById('stage');
+  const bar = document.getElementById('bar');
+  const name = document.getElementById('name');
+  const ease = (t) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
+  function draw(t) {
+    bar.style.transform = `translateX(${(ease(t) * 400).toFixed(3)}px)`;
+    name.style.opacity = ease(t - 1).toFixed(4);
+  }
+  function fit() {
+    const s = Math.min(innerWidth / 640, innerHeight / 360);
+    stage.style.transform = `scale(${s}) translate(-50%, -50%)`;
+  }
+  let playing = true;
+  stage.addEventListener('data-om-seek-to-time-frame', (e) => { playing = !!e.detail.playing; draw(e.detail.time); });
+  addEventListener('resize', fit);
+  fit();
+  // Live preview when opened in a browser.
+  let t0 = performance.now();
+  (function tick(now) { if (playing) draw(((now - t0) / 1000) % 2); requestAnimationFrame(tick); })(t0);
+</script>
+</body>
+</html>

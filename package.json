@@ -1,0 +1,75 @@
+{
+  "name": "canvas-render",
+  "productName": "Canvas Render",
+  "version": "0.1.0",
+  "description": "Render Claude Design exports and HTML animations to ProRes, H.264 and PNG sequences, with motion blur, re-renders of only changed frames, and Premiere/Resolve timeline XML.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Crispen Stanbach",
+  "main": "app/main.cjs",
+  "bin": {
+    "canvas-render": "engine/bin/canvas-render.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "serve": "node engine/bin/canvas-render.mjs serve --open",
+    "app": "electron .",
+    "dist": "electron-builder --mac",
+    "panel": "node scripts/package-panel.cjs",
+    "icons": "node scripts/make-icons.cjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.61.1",
+    "sharp": "^0.35.5",
+    "yauzl": "^3.2.0"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.crispenstanbach.canvas-render",
+    "productName": "Canvas Render",
+    "asar": false,
+    "directories": {
+      "output": "dist",
+      "buildResources": "app/build"
+    },
+    "files": [
+      "engine/**",
+      "ui/**",
+      "app/*.cjs",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.video",
+      "target": [
+        "dmg"
+      ],
+      "icon": "app/build/icon.png",
+      "darkModeSupport": true,
+      "hardenedRuntime": false,
+      "identity": null
+    },
+    "dmg": {
+      "title": "Canvas Render"
+    },
+    "protocols": [
+      {
+        "name": "Canvas Render",
+        "schemes": [
+          "canvas-render"
+        ]
+      }
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cris-pen/canvas-render.git"
+  },
+  "homepage": "https://github.com/cris-pen/canvas-render",
+  "private": true
+}

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Canvas Render</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="head">
+        <h1>Canvas Render</h1>
+        <p id="engineState" class="engine">Looking for the app…</p>
+        <div id="launchButton" class="button ghost" role="button" tabindex="0" hidden>Open Canvas Render</div>
+      </header>
+
+      <section class="group">
+        <div class="label">Export</div>
+        <p id="sourceName" class="source">Nothing chosen yet</p>
+        <div class="row">
+          <div id="chooseFile" class="button" role="button" tabindex="0">Choose .zip or .html…</div>
+          <div id="chooseFolder" class="button ghost" role="button" tabindex="0">Folder…</div>
+        </div>
+      </section>
+
+      <section id="scenesGroup" class="group" hidden>
+        <div class="label">Scenes</div>
+        <div id="sceneList" class="scenes"></div>
+      </section>
+
+      <section class="group">
+        <div class="label">Output</div>
+        <label class="field" for="presetSelect">
+          <span>Preset</span>
+          <select id="presetSelect"></select>
+        </label>
+        <label class="field" for="rateSelect">
+          <span>Frame rate</span>
+          <select id="rateSelect"></select>
+        </label>
+        <label class="check"><input id="besideProject" type="checkbox" checked /> <span>Save beside this Premiere project</span></label>
+        <div class="label small">Bring into Premiere as</div>
+        <label class="check"><input id="importClips" type="radio" name="importAs" checked /> <span>Clips in a bin</span></label>
+        <label class="check"><input id="importSequence" type="radio" name="importAs" /> <span>A sequence with section markers</span></label>
+      </section>
+
+      <div id="renderButton" class="button primary disabled" role="button" tabindex="0">Render and import</div>
+
+      <section id="jobsGroup" class="group" hidden>
+        <div class="label">Progress</div>
+        <div id="jobList" class="jobs"></div>
+      </section>
+
+      <p id="message" class="message"></p>
+    </main>
+    <script src="main.js"></script>
+  </body>
+</html>

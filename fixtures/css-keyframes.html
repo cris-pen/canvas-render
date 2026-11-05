@@ -1,0 +1,10 @@
+<!doctype html>
+<!-- Plain CSS animation on a transparent page: a 1.5 s loop. -->
+<html><head><meta charset="utf-8"><title>Keyframes</title>
+<style>
+  html, body { margin: 0; background: transparent; }
+  .dot { position: absolute; left: 40px; top: 120px; width: 80px; height: 80px; border-radius: 50%;
+         background: #2ec4b6; animation: slide 1.5s cubic-bezier(.6,0,.4,1) infinite alternate; }
+  @keyframes slide { to { transform: translateX(400px); } }
+</style></head>
+<body><div class="dot"></div></body></html>

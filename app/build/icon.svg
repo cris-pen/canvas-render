@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34363c"/>
+      <stop offset="1" stop-color="#1b1c1f"/>
+    </linearGradient>
+    <pattern id="check" width="64" height="64" patternUnits="userSpaceOnUse" x="212" y="352">
+      <rect width="64" height="64" fill="#2b2d32"/>
+      <rect width="32" height="32" fill="#43464e"/>
+      <rect x="32" y="32" width="32" height="32" fill="#43464e"/>
+    </pattern>
+    <linearGradient id="trail" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f5b83d" stop-opacity="0"/>
+      <stop offset="1" stop-color="#f5b83d" stop-opacity="0.55"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+  <rect x="212" y="352" width="600" height="338" rx="10" fill="url(#check)"/>
+  <rect x="212" y="352" width="600" height="338" rx="10" fill="none" stroke="#5a5d65" stroke-width="6"/>
+  <rect x="340" y="470" width="232" height="104" rx="8" fill="url(#trail)"/>
+  <rect x="560" y="470" width="104" height="104" rx="10" fill="#f1ead9"/>
+  <rect x="608" y="296" width="10" height="452" rx="5" fill="#f5b83d"/>
+  <path d="M583 262 h60 v30 l-30 30 l-30 -30 z" fill="#f5b83d"/>
+</svg>

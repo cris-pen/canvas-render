@@ -1,0 +1,89 @@
+/* Matches the Canvas Render app: graphite panels, one amber accent.
+   UXP supports flexbox but not grid, so layout is all flex. */
+
+:root {
+  --bg: #1b1c1f;
+  --panel: #222327;
+  --raised: #2b2d32;
+  --line: #34363c;
+  --text: #e8e7e4;
+  --dim: #a2a4ab;
+  --faint: #6e7179;
+  --amber: #f5b83d;
+  --red: #ff6159;
+  --green: #4cc38a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+h1, p { margin: 0; }
+
+.shell { display: flex; flex-direction: column; padding: 18px 16px 22px; }
+.shell > * { margin-bottom: 16px; }
+
+.head h1 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+.engine { color: var(--dim); font-size: 12px; margin-bottom: 8px; }
+.engine.ok { color: var(--green); }
+.engine.bad { color: var(--red); }
+
+.group { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
+.group > * { margin-bottom: 8px; }
+.group > *:last-child { margin-bottom: 0; }
+.label { color: var(--dim); font-size: 12px; font-weight: 600; }
+.label.small { font-weight: 400; margin-top: 4px; }
+.source { color: var(--text); word-break: break-all; }
+.source.empty { color: var(--faint); }
+
+.row { display: flex; flex-direction: row; }
+.row > * { margin-right: 8px; }
+
+.button {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 28px; padding: 0 12px; border-radius: 5px;
+  background: var(--raised); border: 1px solid var(--line); color: var(--text); cursor: pointer;
+}
+.button:hover { background: #33353b; }
+.button.ghost { background: transparent; }
+.button.primary { background: var(--amber); border-color: var(--amber); color: #1d1606; font-weight: 600; min-height: 34px; }
+.button.primary:hover { background: #ffc552; }
+.button.disabled { background: var(--raised); border-color: var(--line); color: var(--faint); cursor: default; }
+
+.field { display: flex; flex-direction: column; }
+.field span { color: var(--dim); font-size: 12px; margin-bottom: 4px; }
+.field select { width: 100%; background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--amber); }
+
+.check { display: flex; flex-direction: row; align-items: center; }
+.check input { margin: 0 8px 0 0; }
+
+.scenes { display: flex; flex-direction: column; max-height: 240px; overflow-y: auto; }
+.scene { display: flex; flex-direction: row; align-items: flex-start; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.scene:last-child { border-bottom: 0; }
+.scene input { margin: 2px 8px 0 0; }
+.scene .text { display: flex; flex-direction: column; flex: 1; }
+.scene .meta { color: var(--dim); font-size: 12px; }
+.scene .err { color: var(--red); font-size: 12px; }
+.scene.off .name { color: var(--faint); }
+
+.jobs { display: flex; flex-direction: column; }
+.job { display: flex; flex-direction: column; padding: 6px 0; }
+.job .top { display: flex; flex-direction: row; justify-content: space-between; }
+.job .state { color: var(--dim); font-size: 12px; }
+.job.error .state { color: var(--red); }
+.bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.bar div { height: 4px; width: 0; background: var(--amber); }
+.job.done .bar div { background: var(--green); }
+.job.error .bar div { background: var(--red); }
+
+.message { color: var(--dim); font-size: 12px; white-space: pre-wrap; }
+.message.error { color: var(--red); }
+
+[hidden] { display: none; }

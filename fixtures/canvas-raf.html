@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- requestAnimationFrame drawing into a canvas, timed by performance.now. -->
+<html><head><meta charset="utf-8"><title>Canvas</title>
+<style>html, body { margin: 0; background: #000; } canvas { display: block; }</style></head>
+<body><canvas id="c" width="640" height="360"></canvas>
+<script>
+  const ctx = document.getElementById('c').getContext('2d');
+  const start = performance.now();
+  function frame(now) {
+    const t = (now - start) / 1000;
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 640, 360);
+    ctx.fillStyle = '#ffbf00';
+    ctx.fillRect(20 + (t % 2) * 250, 140, 80, 80);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+</script></body></html>
