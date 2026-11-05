@@ -47,6 +47,9 @@ export function requireTools() {
 }
 
 const BT709 = ['-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709'];
+// ffmpeg 7.1 and later take an encoder's colour tags from the frames it is
+// given, so the options above alone leave the file untagged. Tag the frames too.
+const TAG709 = 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv';
 
 /** ffmpeg output arguments for a format. `flatten` composites alpha over black for formats without alpha. */
 export function outputArgs(format, { rate, width, height, alphaInput }) {
@@ -55,16 +58,16 @@ export function outputArgs(format, { rate, width, height, alphaInput }) {
   switch (format) {
     case 'prores4444':
     case 'prores4444xq':
-      return ['-vf', `${scale},format=yuva444p10le`, '-c:v', 'prores_ks', '-profile:v', format === 'prores4444xq' ? '5' : '4',
+      return ['-vf', `${scale},format=yuva444p10le,${TAG709}`, '-c:v', 'prores_ks', '-profile:v', format === 'prores4444xq' ? '5' : '4',
         '-pix_fmt', 'yuva444p10le', '-alpha_bits', '16', '-vendor', 'apl0', ...BT709, '-timecode', '00:00:00:00'];
     case 'prores422hq':
-      return ['-vf', `${flatten(alphaInput)}${scale},format=yuv422p10le`, '-c:v', 'prores_ks', '-profile:v', '3',
+      return ['-vf', `${flatten(alphaInput)}${scale},format=yuv422p10le,${TAG709}`, '-c:v', 'prores_ks', '-profile:v', '3',
         '-pix_fmt', 'yuv422p10le', '-vendor', 'apl0', ...BT709, '-timecode', '00:00:00:00'];
     case 'h264': {
       const enc = t.has('libx264')
         ? ['-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-tune', 'animation']
         : ['-c:v', 'h264_videotoolbox', '-b:v', '24M'];
-      return ['-vf', `${flatten(alphaInput)}${scale},format=yuv420p`, ...enc, '-pix_fmt', 'yuv420p', ...BT709, '-movflags', '+faststart'];
+      return ['-vf', `${flatten(alphaInput)}${scale},format=yuv420p,${TAG709}`, ...enc, '-pix_fmt', 'yuv420p', ...BT709, '-movflags', '+faststart'];
     }
     default:
       throw new Error(`no encoder for ${format} (rate ${rate.label})`);
@@ -143,7 +146,7 @@ export async function probe(file) {
 /** Transcode a master to an H.264 review copy. */
 export async function makeReview(master, file, { alpha }) {
   await run(['-hide_banner', '-loglevel', 'error', '-y', '-i', master,
-    '-vf', `${alpha ? 'format=gbrap,premultiply=inplace=1,' : ''}format=yuv420p`,
+    '-vf', `${alpha ? 'format=gbrap,premultiply=inplace=1,' : ''}format=yuv420p,${TAG709}`,
     ...(tools().has('libx264') ? ['-c:v', 'libx264', '-preset', 'medium', '-crf', '18'] : ['-c:v', 'h264_videotoolbox', '-b:v', '16M']),
     '-pix_fmt', 'yuv420p', ...BT709, '-movflags', '+faststart', file]);
 }
