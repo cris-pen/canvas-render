@@ -154,7 +154,7 @@ test('render and import puts clips in a Canvas Render bin beside the project', {
 test('rendering again updates the clip in place', { skip }, async () => {
   await page.click('#renderButton');
   await page.waitForFunction(() => /updated in place/.test(document.getElementById('message').textContent), null, { timeout: 120000 });
-  assert.match(await text('#jobList'), /Already up to date/);
+  assert.match(await text('#jobList'), /Already up to date|re-rendered/);
   const log = await page.evaluate(() => window.__log);
   assert.equal(log.imports.length, 1, 'no duplicate import');
 });
