@@ -1,0 +1,78 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Motion suite</title>
+<style>
+  body { margin:0; width:1200px; height:800px; background:#101014; font-family: Georgia, serif; }
+  .stage { position:absolute; inset:0; }
+
+  /* 1. CSS @keyframes with a bezier that overshoots */
+  @keyframes slideIn { from { transform: translateX(-320px) scale(0.6); opacity:0 }
+                        to   { transform: translateX(0) scale(1);      opacity:1 } }
+  #card { position:absolute; left:80px; top:60px; width:280px; height:160px;
+          background:#f5f1e8; border-radius:18px; box-shadow:0 18px 40px rgba(0,0,0,.45);
+          animation: slideIn 1.4s cubic-bezier(.34,1.56,.64,1) .2s both;
+          transform-origin: 40px 80px; }
+  #card h2 { margin:0; padding:26px 24px 0; font-size:26px; color:#101014; letter-spacing:-0.5px; }
+
+  /* 2. Multi-keyframe animation with per-keyframe easing and rotation */
+  @keyframes spin { 0%   { transform: rotate(0deg)   translateY(0); animation-timing-function: ease-in }
+                    55%  { transform: rotate(200deg) translateY(-60px); animation-timing-function: cubic-bezier(.2,.8,.3,1) }
+                    100% { transform: rotate(360deg) translateY(0) } }
+  #badge { position:absolute; left:460px; top:90px; width:96px; height:96px; border-radius:50%;
+           background:linear-gradient(135deg,#ff7a45,#ffc46b); animation: spin 2.2s ease-in-out infinite;
+           transform-origin: 48px 48px; mix-blend-mode: screen; }
+
+  /* 3. 3D transform under perspective */
+  #scene { position:absolute; left:660px; top:60px; width:320px; height:200px; perspective:800px; perspective-origin:50% 50%; }
+  @keyframes flip { from { transform: rotateY(0deg) rotateX(0deg) } to { transform: rotateY(-58deg) rotateX(14deg) } }
+  #panel { width:100%; height:100%; background:#2b6cb0; border-radius:12px;
+           transform-style:preserve-3d; animation: flip 1.8s ease-in-out both;
+           transform-origin: 160px 100px 0; filter: drop-shadow(0 10px 18px rgba(0,0,0,.5)); }
+
+  /* 4. SVG stroke draw-on */
+  #draw { position:absolute; left:80px; top:300px; }
+  @keyframes drawOn { from { stroke-dashoffset: 420 } to { stroke-dashoffset: 0 } }
+  #squiggle { stroke:#7ee787; stroke-width:5; fill:none; stroke-linecap:round;
+              stroke-dasharray:420; animation: drawOn 2s ease-out .3s both; }
+
+  /* 5. CSS transition triggered by a class flip from JS */
+  #chip { position:absolute; left:80px; top:520px; width:150px; height:52px; border-radius:26px;
+          background:#3c3c46; transform: translateX(0) rotate(0deg);
+          transition: transform 1.2s cubic-bezier(.65,0,.35,1), background-color 1.2s linear; }
+  #chip.on { transform: translateX(280px) rotate(18deg); background:#e15a97; }
+
+  /* 6. Filter + blur animation */
+  @keyframes glow { 0%,100% { filter: blur(0px) brightness(1) } 50% { filter: blur(6px) brightness(1.6) } }
+  #glowbox { position:absolute; left:460px; top:300px; width:120px; height:120px; background:#ffd166;
+             animation: glow 1.6s ease-in-out infinite; }
+</style></head>
+<body><div class="stage">
+  <div id="card"><h2>Faithful import</h2></div>
+  <div id="badge"></div>
+  <div id="scene"><div id="panel"></div></div>
+  <svg id="draw" width="330" height="160" viewBox="0 0 330 160">
+    <path id="squiggle" d="M10 120 C 70 10, 130 10, 165 80 S 260 150, 320 40"/>
+  </svg>
+  <div id="chip"></div>
+  <div id="glowbox"></div>
+  <!-- 7. JS-driven spring, rAF only, no CSS -->
+  <div id="spring" style="position:absolute;left:660px;top:320px;width:110px;height:110px;background:#9d7cff;border-radius:14px"></div>
+</div>
+<script>
+  // JS spring driven purely by requestAnimationFrame deltas.
+  (function () {
+    const el = document.getElementById('spring');
+    let x = 0, v = 0; const target = 300, k = 90, c = 11;
+    let last = performance.now();
+    function tick(now) {
+      const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      const a = k * (target - x) - c * v;
+      v += a * dt; x += v * dt;
+      el.style.transform = 'translateX(' + x.toFixed(4) + 'px)';
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  })();
+  // Trigger the CSS transition partway in, via setTimeout.
+  setTimeout(function () { document.getElementById('chip').classList.add('on'); }, 600);
+</script>
+</body></html>

@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- A card with a 3D skew, which After Effects layers cannot express, beside a
+     plain card that converts to native layers. Used by the raster fallback test. -->
+<html><head><meta charset="utf-8"><title>Raster fallback</title>
+<style>
+  html, body { margin: 0; width: 640px; height: 360px; background: #101820; overflow: hidden; }
+  .plain { position: absolute; left: 40px; top: 120px; width: 160px; height: 100px; border-radius: 12px;
+           background: #2ec4b6; animation: rise 1s ease-out both; }
+  .skewed { position: absolute; left: 330px; top: 90px; width: 220px; height: 160px; border-radius: 16px;
+            background: #e7b25a; color: #101820; font: 700 28px/1 sans-serif; padding: 20px; box-sizing: border-box;
+            transform: perspective(500px) rotateY(28deg) skewY(14deg); animation: tilt 1s ease-in-out both; }
+  .skewed span { display: block; margin-top: 12px; font-size: 18px; }
+  @keyframes rise { from { transform: translateY(40px); opacity: 0; } }
+  @keyframes tilt { from { transform: perspective(500px) rotateY(-20deg) skewY(14deg); } }
+</style></head>
+<body>
+  <div class="plain"></div>
+  <div class="skewed">Tilted<span>baked as footage</span></div>
+</body></html>

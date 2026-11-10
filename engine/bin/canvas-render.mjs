@@ -6,6 +6,7 @@
 //   canvas-render serve  [--port 47800] [--open]
 
 import path from 'node:path';
+import { PLATE_PRESETS } from '../src/plate.mjs';
 import { Engine } from '../src/engine.mjs';
 import { FORMATS } from '../src/settings.mjs';
 import { RATES } from '../src/rates.mjs';
@@ -22,11 +23,17 @@ render options:
   --scene NAME         only scenes whose name contains NAME (repeatable)
   --all                include scenes that are unticked by default
   --format F           ${Object.keys(FORMATS).join(' | ')}   (default prores4444)
+                       ae writes an After Effects script that builds editable layers
+  --ae-fallback K      with --format ae: trade an editable layer for an exact one (gradients | all)
   --rate R             ${Object.keys(RATES).join(' | ')}   (default 23.976)
   --size S             native | half | hd | uhd   (default native)
   --width N            output width in pixels (keeps aspect)
   --blur [ANGLE:N]     motion blur, shutter angle and samples (default 180:8)
   --transparent        drop the page background
+  --bg B               put a plate behind the render: #rrggbb | linear:ANGLE:#from:#to |
+                       radial:#from:#to | image:PATH | a preset (ink, studio, dusk, sea,
+                       paper, black, white, green, blue)
+  --bg-replace         with --bg: also clear the design's own background fill
   --in F --out F       frame range (inclusive)
   --review             also write an H.264 review copy
   --full               render every frame even if a previous render can be reused
@@ -35,6 +42,18 @@ render options:
   --workers N          capture tabs for Claude Design boards (default: automatic)
   --out-dir DIR        where files go (default ~/Movies/Canvas Render/<project>)
 `;
+
+/** --bg value to a plate (see engine/src/plate.mjs). */
+function parseBackground(v) {
+  const preset = PLATE_PRESETS.find((p) => p.id === String(v).toLowerCase());
+  if (preset) return { ...preset.plate };
+  if (/^#[0-9a-f]{6}$/i.test(v)) return { mode: 'color', color: v };
+  const [kind, ...rest] = String(v).split(':');
+  if (kind === 'linear') return { mode: 'gradient', gradient: { kind, angle: Number(rest[0]), from: rest[1], to: rest[2] } };
+  if (kind === 'radial') return { mode: 'gradient', gradient: { kind, from: rest[0], to: rest[1] } };
+  if (kind === 'image') return { mode: 'image', image: rest.join(':') };
+  throw new Error(`--bg ${v}: use #rrggbb, linear:ANGLE:#from:#to, radial:#from:#to, image:PATH or a preset name.`);
+}
 
 function parse(argv) {
   const args = { _: [], scene: [] };
@@ -45,6 +64,7 @@ function parse(argv) {
       case '--scene': args.scene.push(next()); break;
       case '--all': args.all = true; break;
       case '--format': args.format = next(); break;
+      case '--ae-fallback': (args.aeFallbacks = args.aeFallbacks || []).push(next()); break;
       case '--rate': args.rate = next(); break;
       case '--size': args.size = next(); break;
       case '--width': args.width = Number(next()); break;
@@ -57,6 +77,8 @@ function parse(argv) {
         break;
       }
       case '--transparent': args.transparent = true; break;
+      case '--bg': args.bg = parseBackground(next()); break;
+      case '--bg-replace': args.bgReplace = true; break;
       case '--in': args.in = Number(next()); break;
       case '--out': args.out = Number(next()); break;
       case '--review': args.review = true; break;
@@ -125,7 +147,8 @@ async function main() {
       : (args.all || s.selected)));
     if (!scenes.length) throw new Error('No scenes matched.');
     const settings = {
-      format: args.format, rate: args.rate, size: args.size, width: args.width, transparent: args.transparent,
+      format: args.format, aeFallbacks: args.aeFallbacks, rate: args.rate, size: args.size, width: args.width, transparent: args.transparent,
+      background: args.bg ? { ...args.bg, replace: !!args.bgReplace } : undefined,
       motionBlur: args.blur, review: args.review, partial: !args.full, xml: args.xml !== false, workers: args.workers, pageSize: args.page,
     };
     for (const k of Object.keys(settings)) if (settings[k] === undefined) delete settings[k];
@@ -147,6 +170,15 @@ async function main() {
           if (process.stdout.isTTY) process.stdout.write('\n');
           if (j.status === 'done') {
             const r = j.result;
+            if (r.format === 'ae') {
+              const t = r.tiers;
+              process.stdout.write(`done  ${j.sceneName}  ${r.width}x${r.height} ${r.rate}  ${r.layers} layers in ${r.comps} comp(s): ${t.A} native, ${t.B} fitted, ${t.C} rasterised  ${fmtTime(r.seconds)}\n      ${r.file}\n`);
+              for (const a of r.approximations.slice(0, 6)) process.stdout.write(`      approx  ${a.name}: ${a.note}\n`);
+              for (const a of r.rasterised.slice(0, 6)) process.stdout.write(`      raster  ${a.name}: ${a.reason}\n`);
+              for (const d of r.decisions.filter((x) => !x.accepted)) process.stdout.write(`      choice  ${d.summary}: kept ${d.keeps}. Pass --ae-fallback ${d.kind} for ${d.gains}.\n`);
+              for (const f of r.fonts.filter((x) => x.note)) process.stdout.write(`      font    ${f.name}: ${f.note}\n`);
+              return;
+            }
             const how = r.upToDate ? 'already up to date' : r.reused ? `${r.changed} changed, ${r.rendered} rendered, ${r.reused} reused` : `${r.rendered} frames`;
             process.stdout.write(`done  ${j.sceneName}  ${r.width}x${r.height} ${r.rate}  ${how}  ${fmtTime(r.seconds)}\n      ${r.file}\n`);
             if (r.review) process.stdout.write(`      ${r.review}\n`);

@@ -9,6 +9,7 @@
 //    frames are rendered; the rest are copied from the previous master without
 //    re-encoding.
 
+import { plateCss } from './plate.mjs';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -107,8 +108,9 @@ async function renderFrames(env, frames, { info, settings, scale, sink, onFrame,
   const workers = Math.min(defaultWorkers(info, settings), frames.length);
   const pages = [];
   const viewport = info.mode === 'stage' ? [info.width, info.height] : [info.width, info.height];
+  const plate = plateCss(settings.background);
   for (let i = 0; i < workers; i += 1) {
-    const p = new ScenePage(env.browser, env.roots, env.scene, { width: viewport[0], height: viewport[1], scale, transparent: settings.transparent });
+    const p = new ScenePage(env.browser, env.roots, env.scene, { width: viewport[0], height: viewport[1], scale, transparent: settings.transparent, plate });
     pages.push(p);
   }
   try {

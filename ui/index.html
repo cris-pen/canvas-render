@@ -85,8 +85,40 @@
           </div>
           <small class="hint" id="size-hint"></small>
         </div>
-        <label class="check"><input type="checkbox" name="transparent" id="f-transparent"> <span>Transparent background</span></label>
+        <label class="check" id="transparent-row"><input type="checkbox" name="transparent" id="f-transparent"> <span>Transparent background</span></label>
         <small class="hint indent" id="alpha-hint"></small>
+        <div class="field" id="bg-field">
+          <span>Background</span>
+          <div class="seg" id="f-bg" role="radiogroup" aria-label="Background">
+            <button type="button" data-bg="page" title="The design's own background">Design</button>
+            <button type="button" data-bg="color">Color</button>
+            <button type="button" data-bg="gradient">Gradient</button>
+            <button type="button" data-bg="image">Image</button>
+          </div>
+          <div class="bg-opts" id="bg-opts">
+            <div class="bg-row" id="bg-color-row">
+              <input type="color" id="f-bg-color" aria-label="Background colour">
+              <input type="text" id="f-bg-hex" class="hex" spellcheck="false" aria-label="Background colour hex" maxlength="7">
+            </div>
+            <div class="bg-row" id="bg-grad-row">
+              <input type="color" id="f-bg-from" aria-label="Gradient start colour">
+              <input type="color" id="f-bg-to" aria-label="Gradient end colour">
+              <select id="f-bg-kind" aria-label="Gradient shape"><option value="linear">Linear</option><option value="radial">Radial</option></select>
+              <label class="mini" id="bg-angle-wrap"><input type="number" id="f-bg-angle" min="0" max="359" step="15" aria-label="Gradient angle"><em>°</em></label>
+            </div>
+            <div class="bg-row" id="bg-image-row">
+              <input type="text" id="f-bg-image" spellcheck="false" placeholder="Path to a PNG or JPEG" aria-label="Background image path">
+              <button class="ghost small" id="pick-bg-image" type="button">Choose…</button>
+            </div>
+            <div class="swatches" id="bg-swatches" aria-label="Background presets"></div>
+            <label class="check"><input type="checkbox" id="f-bg-replace"> <span>Replace the design's own background</span></label>
+          </div>
+        </div>
+        <div class="ae-opts" id="ae-opts">
+          <p class="hint">Writes a script that rebuilds each scene in After Effects as shape, text and null layers with real keyframes. Anything AE cannot rebuild comes in as rendered footage, and the report lists it.</p>
+          <label class="check"><input type="checkbox" id="f-ae-gradients"> <span>Exact gradients</span></label>
+          <small class="hint indent">Gradients with three or more stops come in as bitmaps instead of editable two-stop ramps.</small>
+        </div>
         <label class="check"><input type="checkbox" name="blur" id="f-blur"> <span>Motion blur</span></label>
         <div class="blur-opts" id="blur-opts">
           <label class="mini"><span>Shutter</span><input type="number" id="f-shutter" min="1" max="720" step="15"><em>°</em></label>

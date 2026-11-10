@@ -12,6 +12,10 @@
 //   { id, action: 'analyze', input }
 //   { id, action: 'render', input, scenes?: [names], preset?, settings?, outDir? }
 //   { id, action: 'cancel', target: <request id> }
+//
+// After Effects conversions, whoever asked for them, are listed newest first in
+//   <data>/mailbox/ae-recent.json
+// for the After Effects panel's Recent list.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -165,7 +169,21 @@ export class Mailbox {
     return this.engine.open(abs);
   }
 
+  /** Keep the After Effects panel's Recent list. */
+  recordAe(job) {
+    const file = path.join(this.root, 'ae-recent.json');
+    let list = [];
+    try { list = JSON.parse(readFileSync(file, 'utf8')).items || []; } catch { /* first one */ }
+    const r = job.result;
+    list = list.filter((x) => x.file !== r.file && existsSync(x.file));
+    list.unshift({ scene: r.scene, file: r.file, folder: r.folder, layers: r.layers, tiers: r.tiers, at: Date.now() });
+    writeJson(file, { items: list.slice(0, 20) });
+  }
+
   handleEvent(e) {
+    if (e.type === 'job' && e.job && e.job.status === 'done' && e.job.result && e.job.result.format === 'ae') {
+      try { this.recordAe(e.job); } catch { /* the list is a convenience */ }
+    }
     if (e.type === 'progress' || e.type === 'job') {
       const jobId = e.jobId || (e.job && e.job.id);
       for (const state of this.requests.values()) {
@@ -173,7 +191,7 @@ export class Mailbox {
         if (i < 0) continue;
         if (e.type === 'job') state.jobs[i] = e.job; else state.jobs[i] = { ...state.jobs[i], progress: e.progress };
         const running = state.jobs.find((j) => j.status === 'rendering');
-        state.message = running ? `Rendering ${running.sceneName}` : state.message;
+        state.message = running ? `${running.format === 'ae' ? 'Converting' : 'Rendering'} ${running.sceneName}` : state.message;
         this.publish(state);
       }
     } else if (e.type === 'batch') {

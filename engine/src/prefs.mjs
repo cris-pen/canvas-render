@@ -8,7 +8,7 @@ import { DEFAULTS } from './settings.mjs';
 
 const file = () => path.join(dataRoot(), 'prefs.json');
 
-const BASE = { settings: { ...DEFAULTS }, outRoot: null, recent: [] };
+const BASE = { settings: { ...DEFAULTS }, outRoot: null, recent: [], swatches: [] };
 
 export function readPrefs() {
   try {
@@ -26,6 +26,7 @@ export function writePrefs(patch) {
   // Only keep keys the renderer understands.
   for (const k of Object.keys(next.settings)) if (!(k in DEFAULTS)) delete next.settings[k];
   next.recent = (next.recent || []).slice(0, 12);
+  next.swatches = (next.swatches || []).slice(0, 16);
   mkdirSync(dataRoot(), { recursive: true });
   const tmp = `${file()}.part`;
   writeFileSync(tmp, JSON.stringify(next, null, 2));

@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('canvasRender', {
   pathForFile: (file) => { try { return webUtils.getPathForFile(file) || null; } catch { return null; } },
   pickFiles: () => ipcRenderer.invoke('pick-files'),
   pickFolder: (current) => ipcRenderer.invoke('pick-folder', current),
+  pickImage: () => ipcRenderer.invoke('pick-image'),
   reveal: (file, open) => ipcRenderer.invoke('reveal', file, !!open),
   notify: (title, body) => ipcRenderer.send('notify', title, body),
   onOpenPath: (fn) => ipcRenderer.on('open-path', (_e, file) => fn(file)),

@@ -123,6 +123,15 @@ ipcMain.handle('pick-files', async () => {
   return r.canceled ? [] : r.filePaths;
 });
 
+ipcMain.handle('pick-image', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Choose a background image',
+    properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif'] }],
+  });
+  return r.canceled ? null : r.filePaths[0];
+});
+
 ipcMain.handle('pick-folder', async (_e, current) => {
   const r = await dialog.showOpenDialog(win, {
     title: 'Save renders to',

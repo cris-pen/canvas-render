@@ -215,6 +215,24 @@ select:focus, input:focus { border-color: var(--amber-deep); outline: none; }
 .mini { display: flex; align-items: center; gap: 6px; }
 .mini input { width: 64px; }
 .mini em { font-style: normal; color: var(--dim); margin-left: -2px; }
+.bg-opts { display: grid; gap: 8px; margin-top: 4px; }
+.bg-opts[hidden], .bg-row[hidden], .ae-opts[hidden] { display: none; }
+.bg-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bg-row input[type="text"] { flex: 1; min-width: 0; font-size: 12px; }
+.bg-row input.hex { flex: none; width: 82px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.bg-row select { width: auto; }
+input[type="color"] { width: 34px; height: 26px; padding: 2px; border: 1px solid var(--line); border-radius: 5px; background: var(--raised); flex: none; }
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.swatch { width: 26px; height: 26px; border-radius: 5px; border: 1px solid var(--line); padding: 0; flex: none; }
+.swatch.on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--amber); }
+.swatch.add { background: var(--raised); color: var(--dim); font-size: 15px; line-height: 1; }
+.swatch.saved { position: relative; }
+.ae-opts { display: grid; gap: 8px; }
+.ae-opts > .hint { margin: 0; line-height: 1.45; }
+.job details { grid-column: 1 / -1; color: var(--dim); font-size: 12px; margin: 2px 0 2px; }
+.job details summary { cursor: pointer; color: var(--faint); }
+.job details ul { margin: 4px 0 0; padding-left: 18px; }
+.job details li { margin: 2px 0; }
 .folder-row { display: flex; gap: 6px; min-width: 0; }
 .folder-row input { flex: 1; min-width: 0; font-size: 12px; }
 .folder-row button { flex: none; }

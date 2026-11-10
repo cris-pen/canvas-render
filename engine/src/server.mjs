@@ -8,11 +8,12 @@
 //   POST   /api/open      {path}       open a zip, html file, folder or URL
 //   POST   /api/upload?name=x.zip      raw body; for browsers without file paths
 //   DELETE /api/projects/:id
-//   GET    /api/preview?project&scene&t&w&alpha   JPEG frame, or PNG with alpha=1
+//   GET    /api/preview?project&scene&t&w&alpha&bg   JPEG frame, or PNG with alpha=1; bg = plate JSON
 //   POST   /api/render    {items, settings, outDir, name}
 //   GET    /api/jobs
 //   POST   /api/jobs/:id/cancel
 //   POST   /api/reveal    {path, open?}       show an output in Finder
+//   POST   /api/ae/open   {path}              run a converted scene's .jsx in After Effects (macOS)
 //   GET    /api/prefs  PUT /api/prefs
 //   POST   /api/setup/chrome          download the render browser
 
@@ -28,9 +29,42 @@ import { Mailbox } from './mailbox.mjs';
 import { cacheRoot, mimeFor } from './browser.mjs';
 import { readPrefs, writePrefs, rememberProject } from './prefs.mjs';
 import { VERSION } from './paths.mjs';
+import { normalizePlate } from './plate.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const UI_DIR = path.resolve(here, '../../ui');
+
+/**
+ * Hand a script to After Effects. `DoScript` with $.evalFile rather than
+ * `DoScriptFile`, which wants an HFS path on some versions; evalFile still sets
+ * $.fileName, so the script finds its assets folder next to itself. macOS asks
+ * once whether Canvas Render may control After Effects.
+ */
+export function aeOpenScript(file) {
+  const js = `$.evalFile(new File(${JSON.stringify(file)}));`;
+  const as = `tell application id "com.adobe.AfterEffects" to DoScript ${JSON.stringify(js)}`;
+  return ['osascript', ['-e', 'tell application id "com.adobe.AfterEffects" to activate', '-e', as]];
+}
+
+function runInAfterEffects(file) {
+  const [cmd, args] = aeOpenScript(file);
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('error', reject);
+    // AE answers once the script has run, which can take a while for a big
+    // scene; the request returns as soon as AE has it.
+    const t = setTimeout(() => resolve(), 4000);
+    child.on('close', (code) => {
+      clearTimeout(t);
+      if (code === 0) resolve();
+      else reject(new HttpError(500, /-1728|-600|Can.t get application/i.test(err)
+        ? 'After Effects is not installed, or macOS blocked Canvas Render from controlling it (System Settings > Privacy & Security > Automation).'
+        : `After Effects did not run the script: ${err.trim() || `exit ${code}`}`));
+    });
+  });
+}
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -135,8 +169,15 @@ export async function startServer({ port = 47800, host = '127.0.0.1', engine = n
     if (route === 'GET /api/preview') {
       const t = Number(url.searchParams.get('t') || 0);
       const w = Math.max(64, Math.min(1920, Number(url.searchParams.get('w') || 960)));
-      const alpha = url.searchParams.get('alpha') === '1';
-      const img = await engine.preview(url.searchParams.get('project'), url.searchParams.get('scene'), Number.isFinite(t) ? t : 0, Math.round(w), alpha);
+      let alpha = url.searchParams.get('alpha') === '1';
+      let background = null;
+      const bg = url.searchParams.get('bg');
+      if (bg) {
+        try { background = JSON.parse(bg); } catch { throw new HttpError(400, 'bg is not JSON.'); }
+        if (background && background.mode !== 'page') alpha = false;
+        else background = null;
+      }
+      const img = await engine.preview(url.searchParams.get('project'), url.searchParams.get('scene'), Number.isFinite(t) ? t : 0, Math.round(w), alpha, background);
       return send(res, 200, img, alpha ? 'image/png' : 'image/jpeg');
     }
     if (route === 'POST /api/render') {
@@ -159,12 +200,28 @@ export async function startServer({ port = 47800, host = '127.0.0.1', engine = n
       spawn(cmd, args, { stdio: 'ignore', detached: true }).unref();
       return send(res, 200, { ok: true });
     }
+    if (route === 'POST /api/ae/open') {
+      const body = await readJson(req);
+      const file = String(body.path || '');
+      const known = engine.outputs();
+      const ok = file.endsWith('.jsx') && (known.has(file) || [...known].some((d) => file.startsWith(d + path.sep)));
+      if (!ok || !existsSync(file)) throw new HttpError(404, 'That file is not one of this session\'s conversions.');
+      if (process.platform !== 'darwin') throw new HttpError(400, 'Opening in After Effects works on macOS. Run the .jsx from File > Scripts > Run Script File.');
+      await runInAfterEffects(file);
+      return send(res, 200, { ok: true });
+    }
     if (route === 'GET /api/prefs') return send(res, 200, readPrefs());
     if (route === 'PUT /api/prefs') {
       const body = await readJson(req);
       const patch = {};
       if (body.settings && typeof body.settings === 'object') patch.settings = body.settings;
       if ('outRoot' in body) patch.outRoot = body.outRoot ? String(body.outRoot) : null;
+      if (Array.isArray(body.swatches)) {
+        // Saved background plates; each one has to survive the same checks a render does.
+        patch.swatches = body.swatches.slice(0, 16).map((sw) => {
+          try { return { label: String(sw.label || '').slice(0, 40), plate: normalizePlate(sw.plate) }; } catch { return null; }
+        }).filter(Boolean);
+      }
       return send(res, 200, writePrefs(patch));
     }
     if (route === 'POST /api/setup/chrome') {

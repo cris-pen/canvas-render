@@ -1,6 +1,7 @@
 // The engine: projects, scene analysis, previews and the render queue.
 // The CLI, the app window and the Premiere panel all drive this one object.
 
+import { normalizePlate, plateCss, PLATE_PRESETS } from './plate.mjs';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -8,6 +9,7 @@ import path from 'node:path';
 import { launchBrowser, findChrome } from './browser.mjs';
 import { openProject } from './ingest.mjs';
 import { ScenePage, analyzeScene } from './scene-page.mjs';
+import { convertScene } from './ae/convert.mjs';
 import { renderScene, safeName } from './render.mjs';
 import { buildXml } from './xml.mjs';
 import { normalizeSettings, outputSize, FORMATS, SIZES, PRESETS, DEFAULTS } from './settings.mjs';
@@ -52,6 +54,7 @@ export class Engine extends EventEmitter {
     return {
       app: 'canvas-render', ffmpeg: t.ffmpeg, ffmpegVersion: t.version, prores: t.has('prores_ks'), x264: t.has('libx264'),
       chrome: findChrome(), outRoot: defaultOutRoot(), home: os.homedir(), formats: FORMATS, sizes: SIZES, rates: Object.keys(RATES), presets: PRESETS, defaults: DEFAULTS,
+      platform: process.platform, plates: PLATE_PRESETS,
     };
   }
 
@@ -108,8 +111,10 @@ export class Engine extends EventEmitter {
   }
 
   /** A JPEG of one frame, for the scrubber. */
-  async preview(projectId, sceneId, seconds, width = 960, transparent = false) {
+  async preview(projectId, sceneId, seconds, width = 960, transparent = false, background = null) {
     const { scene } = this.scene(projectId, sceneId);
+    const plate = background ? plateCss(normalizePlate(background)) : null;
+    if (plate) transparent = false;
     if (!scene.info) throw new Error(scene.error || 'Scene did not load.');
     const key = `${projectId}/${sceneId}/${width}/${transparent ? 'a' : 'o'}`;
     let entry = this.previews.get(key);
@@ -130,6 +135,7 @@ export class Engine extends EventEmitter {
     return entry.mutex.run(async () => {
       // Only the latest request matters while scrubbing.
       const t = Math.max(0, Math.min(entry.want, scene.info.duration));
+      await entry.page.setPlate(plate);
       await entry.page.seek(t);
       // JPEG has no alpha, so a transparent preview is a PNG.
       return transparent ? entry.page.capture({ type: 'png' }) : entry.page.capture({ type: 'jpeg', quality: 80 });
@@ -193,15 +199,18 @@ export class Engine extends EventEmitter {
     let last = 0;
     try {
       const browser = await this.getBrowser();
-      job.result = await renderScene({ browser, roots: this.roots, project, scene }, {
-        info: scene.info, settings: job.settings, outDir: job.outDir, inFrame: job.inFrame, outFrame: job.outFrame,
-        signal: job.controller.signal,
-        onProgress: (p) => {
-          job.progress = p;
-          const now = Date.now();
-          if (now - last > 200 || p.phase === 'done') { last = now; this.emit('event', { type: 'progress', jobId: job.id, progress: p }); }
-        },
-      });
+      const onProgress = (p) => {
+        job.progress = p;
+        const now = Date.now();
+        if (now - last > 200 || p.phase === 'done') { last = now; this.emit('event', { type: 'progress', jobId: job.id, progress: p }); }
+      };
+      const env = { browser, roots: this.roots, project, scene };
+      job.result = job.settings.format === 'ae'
+        ? await convertScene(env, { info: scene.info, settings: job.settings, outDir: job.outDir, signal: job.controller.signal, onProgress })
+        : await renderScene(env, {
+          info: scene.info, settings: job.settings, outDir: job.outDir, inFrame: job.inFrame, outFrame: job.outFrame,
+          signal: job.controller.signal, onProgress,
+        });
       job.status = 'done';
     } catch (err) {
       job.status = err.code === 'CANCELLED' ? 'cancelled' : 'error';
@@ -217,7 +226,7 @@ export class Engine extends EventEmitter {
     if (jobs.some((j) => j.status === 'queued' || j.status === 'rendering')) return;
     batch.status = 'done';
     const done = jobs.filter((j) => j.status === 'done' && j.result);
-    if (batch.settings.xml && done.length && batch.settings.format !== 'png') {
+    if (batch.settings.xml && done.length && batch.settings.format !== 'png' && batch.settings.format !== 'ae') {
       try {
         const xml = buildXml({
           name: `${batch.name} ${batch.settings.rate}`,
@@ -253,7 +262,7 @@ export class Engine extends EventEmitter {
     const set = new Set();
     for (const j of this.jobs) {
       if (j.outDir) set.add(j.outDir);
-      if (j.result) { set.add(j.result.file); if (j.result.review) set.add(j.result.review); }
+      if (j.result) { set.add(j.result.file); if (j.result.review) set.add(j.result.review); if (j.result.folder) set.add(j.result.folder); }
     }
     for (const b of this.batches.values()) if (b.xml) set.add(b.xml);
     return set;

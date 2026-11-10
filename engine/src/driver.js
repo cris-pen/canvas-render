@@ -159,6 +159,42 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
+  // A background plate (see plate.mjs). On a board the page around the stage
+  // is only letterboxing, so the plate always replaces it; "replace" also
+  // clears the board's own top-level fill. On a plain page the plate only goes
+  // where the page paints nothing, unless "replace" clears the page's own.
+  function setPlate(plate) {
+    let style = document.getElementById('cr-plate');
+    if (style) style.remove();
+    const board = stage() && stage().querySelector(':scope > foreignObject > *');
+    if (board) board.removeAttribute('data-cr-board');
+    if (!plate || !plate.css) return false;
+    const bg = `html{background:${plate.css}!important}body{background:transparent!important}`;
+    let css = '';
+    if (board) {
+      css = bg;
+      if (plate.replace) {
+        board.setAttribute('data-cr-board', '');
+        css += '[data-cr-board]{background:transparent!important}';
+      }
+    } else if (plate.replace) {
+      css = bg;
+    } else {
+      const clear = (el) => {
+        if (!el) return true;
+        const cs = getComputedStyle(el);
+        return cs.backgroundImage === 'none' && /rgba\(0, 0, 0, 0\)|transparent/.test(cs.backgroundColor);
+      };
+      if (clear(document.documentElement) && clear(document.body)) css = bg;
+    }
+    if (!css) return false;
+    style = document.createElement('style');
+    style.id = 'cr-plate';
+    style.textContent = css;
+    (document.head || document.documentElement).appendChild(style);
+    return true;
+  }
+
   function animationDuration() {
     let end = 0; let longestLoop = 0; let count = 0;
     let animations = [];
@@ -205,7 +241,7 @@
         el = stage();
       }
       steadyRaster();
-      if (options.transparent) makeTransparent();
+      if (options.transparent && !options.plate) makeTransparent();
       if (document.fonts && document.fonts.ready) await withTimeout(document.fonts.ready, 8000);
       await waitForImages();
 
@@ -297,5 +333,6 @@
     warnings: () => state.warnings.slice(),
     /** Called when the page reports that its board failed to load, to stop waiting for a stage. */
     stopWaiting: () => { state.stop = true; },
+    setPlate,
   };
 })();

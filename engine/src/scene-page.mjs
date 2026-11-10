@@ -15,7 +15,8 @@ export class ScenePage {
    * @param browser   Playwright Browser
    * @param roots     Map projectId -> folder, for serving project files
    * @param scene     { url, ... } from ingest
-   * @param opts      { width, height, scale, transparent }
+   * @param opts      { width, height, scale, transparent, plate }
+   *                  plate: { css, replace } from plateCss(), or null
    *                  width/height: viewport in CSS px (the stage or page size)
    *                  scale: output pixels per CSS px
    */
@@ -23,7 +24,8 @@ export class ScenePage {
     this.browser = browser;
     this.roots = roots;
     this.scene = scene;
-    this.opts = { width: 1280, height: 720, scale: 1, transparent: false, ...opts };
+    this.opts = { width: 1280, height: 720, scale: 1, transparent: false, plate: null, ...opts };
+    this.plateApplied = null;
     this.info = null;
     this.errors = [];
     this.timeMs = 0;
@@ -56,9 +58,19 @@ export class ScenePage {
     await this.page.goto(this.scene.url, { waitUntil: 'load', timeout: 90000 });
     const ok = await this.page.evaluate(() => typeof window.__cr === 'object' && typeof window.__crClock === 'object');
     if (!ok) throw new Error('The render driver did not install in this page.');
-    this.info = await this.page.evaluate((options) => window.__cr.ready(options), { transparent: this.opts.transparent });
+    this.info = await this.page.evaluate((options) => window.__cr.ready(options), { transparent: this.opts.transparent, plate: !!this.opts.plate });
     this.info.errors = [...(this.info.errors || []), ...this.errors];
     this.timeMs = 0;
+    this.plateApplied = null;
+    if (this.opts.plate) await this.setPlate(this.opts.plate);
+  }
+
+  /** Paint a background plate under the scene, or take it away (null). */
+  async setPlate(plate) {
+    const key = plate ? JSON.stringify(plate) : null;
+    if (key === this.plateApplied) return;
+    await this.page.evaluate((p) => window.__cr.setPlate(p), plate || null);
+    this.plateApplied = key;
   }
 
   /** Move to `seconds`. Pages without a stage can only go forward, so going back reloads. */

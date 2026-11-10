@@ -1,5 +1,6 @@
 // Render settings: the formats, sizes and defaults an editor picks from.
 
+import { PLATE_DEFAULT, normalizePlate, plateActive, plateKey } from './plate.mjs';
 import { parseRate } from './rates.mjs';
 
 export const FORMATS = {
@@ -8,6 +9,9 @@ export const FORMATS = {
   prores422hq: { label: 'ProRes 422 HQ', ext: '.mov', alpha: false, intra: true, suffix: '422HQ' },
   h264: { label: 'H.264 review', ext: '.mp4', alpha: false, intra: false, suffix: 'h264' },
   png: { label: 'PNG sequence (alpha)', ext: '', alpha: true, intra: true, suffix: 'png' },
+  // Not a render: a script that builds the scene in After Effects as native,
+  // editable layers. See engine/src/ae/.
+  ae: { label: 'After Effects (editable layers)', ext: '.jsx', alpha: true, intra: false, suffix: 'AE', editable: true },
 };
 
 export const SIZES = {
@@ -29,6 +33,8 @@ export const DEFAULTS = {
   xml: true,              // write a Premiere/Resolve XML for the batch
   pageSize: null,         // [w, h] for plain HTML pages; null = detect
   workers: 0,             // 0 = automatic
+  aeFallbacks: [],        // After Effects: trade editability for fidelity, e.g. ['gradients']
+  background: PLATE_DEFAULT, // a plate behind the render; see plate.mjs
 };
 
 // Starting points an editor picks from. Rate and size stay as set unless a preset names them.
@@ -37,7 +43,8 @@ export const PRESETS = [
   { id: 'master-review', label: 'Master + review copy', detail: 'ProRes 4444 with alpha, plus an H.264 to send', settings: { format: 'prores4444', size: 'native', review: true } },
   { id: 'full-frame', label: 'Full-frame master', detail: 'ProRes 422 HQ, no alpha', settings: { format: 'prores422hq', size: 'native', review: false } },
   { id: 'client-review', label: 'Client review', detail: 'H.264 at 1080p', settings: { format: 'h264', size: 'hd', review: false } },
-  { id: 'ae-png', label: 'After Effects', detail: 'PNG sequence with alpha', settings: { format: 'png', size: 'native', review: false } },
+  { id: 'ae-layers', label: 'After Effects layers', detail: 'Editable shape, text and null layers with keyframes', settings: { format: 'ae' } },
+  { id: 'ae-png', label: 'PNG sequence', detail: 'PNG sequence with alpha', settings: { format: 'png', size: 'native', review: false } },
   { id: 'uhd-master', label: '4K master', detail: 'ProRes 4444 with alpha at 3840 wide', settings: { format: 'prores4444', size: 'uhd', review: false } },
 ];
 
@@ -50,6 +57,10 @@ export function normalizeSettings(input = {}) {
   s.rate = s.rateInfo.label;
   s.motionBlur.shutter = Math.min(720, Math.max(1, Number(s.motionBlur.shutter) || 180));
   s.motionBlur.samples = Math.min(64, Math.max(2, Math.round(Number(s.motionBlur.samples) || 8)));
+  s.background = normalizePlate(input.background || DEFAULTS.background);
+  // A plate fills the frame, so there is nothing left to be transparent.
+  if (plateActive(s.background)) s.transparent = false;
+  s.aeFallbacks = Array.isArray(s.aeFallbacks) ? s.aeFallbacks.filter((k) => ['gradients', 'all'].includes(k)) : [];
   return s;
 }
 
@@ -71,5 +82,6 @@ export function pixelKey(settings, out, info) {
     f: settings.format, r: settings.rate, w: out.width, h: out.height,
     t: !!settings.transparent, b: settings.motionBlur.enabled ? [settings.motionBlur.shutter, settings.motionBlur.samples] : 0,
     m: info.mode, sw: info.width, sh: info.height,
+    p: plateKey(settings.background),
   });
 }

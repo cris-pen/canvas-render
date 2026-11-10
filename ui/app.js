@@ -19,7 +19,11 @@ const el = (tag, attrs = {}, ...kids) => {
 const RATES = { '23.976': [24000, 1001], 24: [24, 1], 25: [25, 1], '29.97': [30000, 1001], 30: [30, 1], 50: [50, 1], '59.94': [60000, 1001], 60: [60, 1] };
 const MARKER_COLORS = ['#4cc38a', '#b48cff', '#4fb6e8', '#f08c4a', '#e86fa6', '#d9d35b'];
 const KIND = { board: 'Board', standalone: 'Standalone export', html: 'HTML page', url: 'Web page' };
-const PHASE = { queued: 'Waiting', checking: 'Checking for changes', rendering: 'Rendering', splicing: 'Splicing into the last render', encoding: 'Encoding', review: 'Making the review copy' };
+const PHASE = {
+  queued: 'Waiting', checking: 'Checking for changes', rendering: 'Rendering', splicing: 'Splicing into the last render', encoding: 'Encoding', review: 'Making the review copy',
+  capturing: 'Measuring', building: 'Building layers', isolating: 'Rendering raster layers', writing: 'Writing the script',
+};
+const BG_DEFAULT = { mode: 'page', color: '#101418', gradient: { kind: 'linear', angle: 180, from: '#1d2a33', to: '#0b1014' }, image: null, replace: false };
 
 const state = {
   status: null,
@@ -189,15 +193,29 @@ function renderFields() {
   }
   const sc = scene();
   $('#size-hint').textContent = sc && sc.info ? `${sc.info.width} × ${sc.info.height} becomes ${outSize(sc.info).join(' × ')}` : '';
+  const ae = !!fmt.editable;
+  const bg = background();
+  const plate = bg.mode !== 'page';
   const tr = $('#f-transparent');
-  tr.checked = !!s.transparent && fmt.alpha; tr.disabled = !fmt.alpha;
-  tr.closest('.check').classList.toggle('off', !fmt.alpha);
-  $('#alpha-hint').textContent = fmt.alpha ? '' : `${fmt.label} has no alpha channel.`;
+  tr.checked = !!s.transparent && fmt.alpha && !plate; tr.disabled = !fmt.alpha || plate;
+  tr.closest('.check').classList.toggle('off', !fmt.alpha || plate);
+  $('#alpha-hint').textContent = ae ? '' : plate && fmt.alpha ? 'A background fills the frame, so there is no alpha.' : fmt.alpha ? '' : `${fmt.label} has no alpha channel.`;
+  // After Effects output rebuilds the scene natively: size, blur, plates and the
+  // timeline extras do not apply.
+  for (const id of ['#f-size', '#transparent-row', '#f-blur', '#review-row', '#f-xml', '#f-partial', '#bg-field']) {
+    const row = id.startsWith('#f-') ? $(id).closest('.field, .check') : $(id);
+    row.hidden = ae;
+  }
+  $('#blur-opts').hidden = ae;
+  $('#alpha-hint').hidden = ae;
+  $('#ae-opts').hidden = !ae;
+  $('#f-ae-gradients').checked = (s.aeFallbacks || []).includes('gradients');
+  renderBackground();
   $('#f-blur').checked = s.motionBlur.enabled;
   $('#blur-opts').classList.toggle('off', !s.motionBlur.enabled);
   $('#f-shutter').value = s.motionBlur.shutter;
   $('#f-samples').value = String(s.motionBlur.samples);
-  $('#review-row').hidden = s.format === 'h264';
+  if (!ae) $('#review-row').hidden = s.format === 'h264';
   $('#f-review').checked = !!s.review;
   $('#f-xml').checked = !!s.xml;
   $('#f-xml').disabled = s.format === 'png';
@@ -214,6 +232,85 @@ function renderFields() {
   renderGo();
 }
 
+function background() {
+  const b = state.settings.background || {};
+  return { ...BG_DEFAULT, ...b, gradient: { ...BG_DEFAULT.gradient, ...(b.gradient || {}) } };
+}
+
+function setBackground(patch) {
+  const b = background();
+  setSettings({ background: { ...b, ...patch, gradient: { ...b.gradient, ...(patch.gradient || {}) } } });
+}
+
+function plateCss(p) {
+  if (p.mode === 'color') return p.color;
+  if (p.mode === 'gradient') {
+    const g = { ...BG_DEFAULT.gradient, ...(p.gradient || {}) };
+    return g.kind === 'radial' ? `radial-gradient(farthest-corner at 50% 45%, ${g.from}, ${g.to})` : `linear-gradient(${g.angle}deg, ${g.from}, ${g.to})`;
+  }
+  return 'repeating-conic-gradient(var(--check-a) 0 25%, var(--check-b) 0 50%) 0 0 / 8px 8px';
+}
+
+function samePlate(a, b) {
+  if (a.mode !== b.mode) return false;
+  if (a.mode === 'color') return a.color.toLowerCase() === b.color.toLowerCase();
+  if (a.mode === 'gradient') {
+    const x = { ...BG_DEFAULT.gradient, ...a.gradient }; const y = { ...BG_DEFAULT.gradient, ...b.gradient };
+    return x.kind === y.kind && x.from.toLowerCase() === y.from.toLowerCase() && x.to.toLowerCase() === y.to.toLowerCase() && (x.kind === 'radial' || Number(x.angle) === Number(y.angle));
+  }
+  return a.mode === 'image' && a.image === b.image;
+}
+
+function renderBackground() {
+  const b = background();
+  for (const btn of document.querySelectorAll('#f-bg button')) {
+    const on = btn.dataset.bg === b.mode;
+    btn.classList.toggle('on', on); btn.setAttribute('aria-checked', String(on)); btn.setAttribute('role', 'radio');
+  }
+  $('#bg-opts').hidden = b.mode === 'page';
+  $('#bg-color-row').hidden = b.mode !== 'color';
+  $('#bg-grad-row').hidden = b.mode !== 'gradient';
+  $('#bg-image-row').hidden = b.mode !== 'image';
+  $('#f-bg-color').value = b.color;
+  if (document.activeElement !== $('#f-bg-hex')) $('#f-bg-hex').value = b.color;
+  $('#f-bg-from').value = b.gradient.from;
+  $('#f-bg-to').value = b.gradient.to;
+  $('#f-bg-kind').value = b.gradient.kind;
+  $('#f-bg-angle').value = b.gradient.angle;
+  $('#bg-angle-wrap').hidden = b.gradient.kind === 'radial';
+  if (document.activeElement !== $('#f-bg-image')) $('#f-bg-image').value = b.image || '';
+  $('#pick-bg-image').hidden = !(host && host.pickImage);
+  $('#f-bg-replace').checked = !!b.replace;
+  const box = $('#bg-swatches'); box.replaceChildren();
+  const saved = (state.status.prefs && state.status.prefs.swatches) || [];
+  const all = [...(state.status.plates || []).map((p) => ({ ...p, builtIn: true })), ...saved.map((sw, i) => ({ id: `saved-${i}`, label: sw.label || 'Saved', plate: sw.plate, index: i }))];
+  for (const sw of all) {
+    const pl = { ...BG_DEFAULT, ...sw.plate, gradient: { ...BG_DEFAULT.gradient, ...(sw.plate.gradient || {}) } };
+    const btn = el('button', {
+      class: `swatch${sw.builtIn ? '' : ' saved'}${samePlate(pl, b) ? ' on' : ''}`, type: 'button',
+      title: sw.builtIn ? sw.label : `${sw.label}. Alt-click to remove.`,
+      onclick: (e) => {
+        if (!sw.builtIn && e.altKey) { saveSwatches(saved.filter((_, i) => i !== sw.index)); return; }
+        setBackground({ mode: pl.mode, color: pl.color, gradient: pl.gradient, image: pl.mode === 'image' ? pl.image : b.image });
+      },
+    });
+    btn.style.background = plateCss(pl);
+    box.append(btn);
+  }
+  if (b.mode !== 'image') {
+    box.append(el('button', { class: 'swatch add', type: 'button', title: 'Save this background', 'aria-label': 'Save this background',
+      onclick: () => { if (!all.some((sw) => samePlate({ ...BG_DEFAULT, ...sw.plate, gradient: { ...BG_DEFAULT.gradient, ...(sw.plate.gradient || {}) } }, b))) saveSwatches([...saved, { label: b.mode === 'color' ? b.color : `${b.gradient.from} to ${b.gradient.to}`, plate: { mode: b.mode, color: b.color, gradient: b.gradient } }]); } }, '+'));
+  }
+}
+
+async function saveSwatches(list) {
+  try {
+    const prefs = await api('/api/prefs', { method: 'PUT', body: { swatches: list } });
+    state.status.prefs = prefs;
+    renderBackground();
+  } catch (err) { toast(err.message); }
+}
+
 function outSize(info) {
   const s = state.settings; let k = 1;
   if (s.width) k = s.width / info.width;
@@ -228,19 +325,22 @@ function renderGo() {
   const p = project(); const btn = $('#render-btn'); const hint = $('#go-hint');
   const n = p ? p.scenes.filter((s) => s.selected && usable(s)).length : 0;
   const tools = state.status && state.status.ffmpeg && state.status.chrome;
-  btn.disabled = !n || !tools;
-  btn.textContent = n > 1 ? `Render ${n} scenes` : 'Render';
   const s = state.settings;
+  const ae = state.status && state.status.formats[s.format] && state.status.formats[s.format].editable;
+  btn.disabled = !n || !tools;
+  const verb = ae ? 'Convert' : 'Render';
+  btn.textContent = n > 1 ? `${verb} ${n} scenes` : verb;
   if (!p) hint.textContent = '';
   else if (!tools) hint.textContent = 'Finish setup above to render.';
   else if (!n) hint.textContent = 'Tick at least one scene.';
+  else if (ae) hint.textContent = 'Makes a .jsx per scene. Run it in After Effects, or use Open in After Effects when it is done.';
   else if (s.motionBlur.enabled) hint.textContent = `Motion blur captures ${s.motionBlur.samples} samples per frame, so it takes about ${s.motionBlur.samples} times as long.`;
   else hint.textContent = '';
 }
 
 function alphaPreview() {
   const fmt = state.status && state.settings ? state.status.formats[state.settings.format] : null;
-  return !!(fmt && fmt.alpha && state.settings.transparent);
+  return !!(fmt && fmt.alpha && state.settings.transparent && background().mode === 'page' && !fmt.editable);
 }
 
 function renderViewer() {
@@ -336,8 +436,11 @@ async function requestPreview() {
   const w = Math.min(1920, Math.round($('#frame').getBoundingClientRect().width * (window.devicePixelRatio || 1)) || 960);
   const t = secondsAt(state.frame);
   const alpha = alphaPreview() ? '&alpha=1' : '';
+  const fmt = state.status.formats[state.settings.format];
+  const b = background();
+  const bg = b.mode !== 'page' && !(fmt && fmt.editable) && (b.mode !== 'image' || b.image) ? `&bg=${encodeURIComponent(JSON.stringify(b))}` : '';
   try {
-    const blob = await api(`/api/preview?project=${encodeURIComponent(p.id)}&scene=${encodeURIComponent(s.id)}&t=${t.toFixed(5)}&w=${Math.ceil(w / 160) * 160}${alpha}`);
+    const blob = await api(`/api/preview?project=${encodeURIComponent(p.id)}&scene=${encodeURIComponent(s.id)}&t=${t.toFixed(5)}&w=${Math.ceil(w / 160) * 160}${alpha}${bg}`);
     if (project() === p && scene() === s) {
       const url = URL.createObjectURL(blob);
       const img = $('#preview');
@@ -358,7 +461,7 @@ function setSettings(patch, keepPreset = false) {
   state.settings = { ...state.settings, ...patch, motionBlur: { ...state.settings.motionBlur, ...(patch.motionBlur || {}) } };
   if (!keepPreset) state.presetId = matchPreset();
   renderPresets(); renderFields(); renderScenes(); renderRuler();
-  if ('transparent' in patch || 'format' in patch) renderViewer();
+  if ('transparent' in patch || 'format' in patch || 'background' in patch) renderViewer();
   savePrefs();
 }
 
@@ -516,6 +619,22 @@ async function refreshStatus() {
   } catch (err) { toast(`Can't reach the engine: ${err.message}`); }
 }
 
+function aeNotes(r) {
+  const out = [];
+  for (const x of r.rasterised || []) out.push(`${x.name}: ${x.reason}`);
+  for (const a of r.approximations || []) out.push(`${a.name}: ${a.note}`);
+  for (const d of (r.decisions || []).filter((x) => !x.accepted)) out.push(`${d.summary} (${d.layers.join(', ')}): kept ${d.keeps}. Tick Exact gradients for ${d.gains}.`);
+  for (const f of (r.fonts || []).filter((x) => x.note)) out.push(`${f.family || f.name}: ${f.note}`);
+  if ((r.fonts || []).some((x) => x.file)) out.push('Fonts the scene uses are in the fonts folder beside the script. Install any you do not have before running it.');
+  if (r.withinTolerance === false) out.push(`Worst position error ${r.worstPositionError.toFixed(2)} px.`);
+  if (r.truncated) out.push('Only the first two minutes were converted.');
+  return out;
+}
+
+async function openInAE(file) {
+  try { await api('/api/ae/open', { method: 'POST', body: { path: file } }); toast('Sent to After Effects.'); } catch (err) { toast(err.message); }
+}
+
 async function reveal(path, open = false) {
   try { if (host && host.reveal) await host.reveal(path, open); else await api('/api/reveal', { method: 'POST', body: { path, open } }); } catch (err) { toast(err.message); }
 }
@@ -534,6 +653,13 @@ function jobState(j) {
     const r = j.result || {};
     if (r.upToDate) return { text: 'Already up to date', pct: 1 };
     const t = `Done in ${dur(r.seconds || 0)}`;
+    if (r.format === 'ae') {
+      const tiers = r.tiers || {};
+      const parts = [`${r.layers} layers`];
+      if (tiers.B) parts.push(`${tiers.B} fitted`);
+      if (tiers.C) parts.push(`${tiers.C} rendered as footage`);
+      return { text: `${t}. ${parts.join(', ')}.`, pct: 1 };
+    }
     return { text: r.reused ? `${t}. ${r.rendered} frames re-rendered, ${r.reused} reused.` : `${t}. ${r.frames} frames.`, pct: 1 };
   }
   if (j.status === 'cancelled') return { text: 'Cancelled', pct: 0 };
@@ -560,7 +686,10 @@ function renderQueue() {
       const bar = el('div', { class: 'bar' }, el('i')); bar.firstChild.style.width = `${Math.round(st.pct * 100)}%`;
       const acts = el('div', { class: 'acts' });
       if (j.status === 'queued' || j.status === 'rendering') acts.append(el('button', { class: 'link', type: 'button', onclick: () => api(`/api/jobs/${j.id}/cancel`, { method: 'POST' }) }, 'Cancel'));
-      if (j.status === 'done' && j.result) {
+      if (j.status === 'done' && j.result && j.result.format === 'ae') {
+        acts.append(el('button', { class: 'link', type: 'button', onclick: () => reveal(j.result.file) }, 'Show in Finder'));
+        if (state.status.platform === 'darwin') acts.append(el('button', { class: 'link', type: 'button', onclick: () => openInAE(j.result.file) }, 'Open in After Effects'));
+      } else if (j.status === 'done' && j.result) {
         acts.append(el('button', { class: 'link', type: 'button', onclick: () => reveal(j.result.file) }, 'Show in Finder'));
         if (j.result.review) acts.append(el('button', { class: 'link', type: 'button', onclick: () => reveal(j.result.review, true) }, 'Play review'));
         else if (j.format === 'h264') acts.append(el('button', { class: 'link', type: 'button', onclick: () => reveal(j.result.file, true) }, 'Play'));
@@ -569,6 +698,12 @@ function renderQueue() {
       box.append(el('div', { class: `job ${j.status}` },
         el('div', { class: 'name', title: j.result ? j.result.file : j.outDir }, j.sceneName, range ? el('small', { text: range }) : null),
         bar, el('div', { class: 'state', text: st.text }), acts));
+      if (j.status === 'done' && j.result && j.result.format === 'ae') {
+        const notes = aeNotes(j.result);
+        if (notes.length) {
+          box.lastChild.append(el('details', {}, el('summary', { text: `${notes.length} note${notes.length === 1 ? '' : 's'}` }), el('ul', {}, ...notes.map((n) => el('li', { text: n })))));
+        }
+      }
     }
     list.append(box);
   }
@@ -644,6 +779,17 @@ function wire() {
   });
   $('#f-outdir').addEventListener('change', (e) => { const p = project(); if (p) { state.outDirs[p.id] = e.target.value.trim() || undefined; renderFields(); } });
   $('#f-format').addEventListener('change', (e) => setSettings({ format: e.target.value }));
+  $('#f-ae-gradients').addEventListener('change', (e) => setSettings({ aeFallbacks: e.target.checked ? ['gradients'] : [] }));
+  for (const b of document.querySelectorAll('#f-bg button')) b.addEventListener('click', () => setBackground({ mode: b.dataset.bg }));
+  $('#f-bg-color').addEventListener('input', (e) => setBackground({ color: e.target.value }));
+  $('#f-bg-hex').addEventListener('change', (e) => { const v = e.target.value.trim(); if (/^#?[0-9a-f]{6}$/i.test(v)) setBackground({ color: v.startsWith('#') ? v : `#${v}` }); else renderBackground(); });
+  $('#f-bg-from').addEventListener('input', (e) => setBackground({ gradient: { from: e.target.value } }));
+  $('#f-bg-to').addEventListener('input', (e) => setBackground({ gradient: { to: e.target.value } }));
+  $('#f-bg-kind').addEventListener('change', (e) => setBackground({ gradient: { kind: e.target.value } }));
+  $('#f-bg-angle').addEventListener('change', (e) => setBackground({ gradient: { angle: Number(e.target.value) || 0 } }));
+  $('#f-bg-image').addEventListener('change', (e) => setBackground({ image: e.target.value.trim() || null }));
+  $('#f-bg-replace').addEventListener('change', (e) => setBackground({ replace: e.target.checked }));
+  $('#pick-bg-image').addEventListener('click', async () => { const f = await host.pickImage(); if (f) setBackground({ mode: 'image', image: f }); });
   $('#f-rate').addEventListener('change', (e) => { const s = scene(); const t = s && usable(s) ? secondsAt(state.frame) : 0; setSettings({ rate: e.target.value }); if (s && usable(s)) seek(Math.round((t * rate().n) / rate().d)); });
   for (const b of document.querySelectorAll('#f-size button')) b.addEventListener('click', () => setSettings({ size: b.dataset.size, width: null }));
   $('#f-transparent').addEventListener('change', (e) => setSettings({ transparent: e.target.checked }));
