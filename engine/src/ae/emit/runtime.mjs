@@ -215,19 +215,27 @@ D2AE.addPath = function (layer, spec) {
   var vectors = layer.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group");
   vectors.name = "Path";
   var group = vectors.property("ADBE Vectors Group");
-  var shapeProp = group.addProperty("ADBE Vector Shape - Group");
-  var path = new Shape();
-  path.vertices = spec.vertices;
-  path.inTangents = spec.inTangents;
-  path.outTangents = spec.outTangents;
-  path.closed = spec.closed;
-  shapeProp.property("ADBE Vector Shape").setValue(path);
-  if (spec.morph) D2AE.applyMorph(shapeProp.property("ADBE Vector Shape"), spec.morph);
+  var contours = spec.contours || [], c, shapeProp, path;
+  for (c = 0; c < contours.length; c += 1) {
+    // AE refuses a Path with no points; the converter drops those, this is the
+    // second line of defence.
+    if (!contours[c].vertices || !contours[c].vertices.length) continue;
+    shapeProp = group.addProperty("ADBE Vector Shape - Group");
+    path = new Shape();
+    path.vertices = contours[c].vertices;
+    path.inTangents = contours[c].inTangents;
+    path.outTangents = contours[c].outTangents;
+    path.closed = contours[c].closed;
+    shapeProp.property("ADBE Vector Shape").setValue(path);
+    if (spec.morph && spec.morph[c]) D2AE.applyMorph(shapeProp.property("ADBE Vector Shape"), spec.morph[c]);
+  }
 
   if (spec.fill) {
     var fill = group.addProperty("ADBE Vector Graphic - Fill");
     fill.property("ADBE Vector Fill Color").setValue([spec.fill.c[0] / 255, spec.fill.c[1] / 255, spec.fill.c[2] / 255, 1]);
     fill.property("ADBE Vector Fill Opacity").setValue(spec.fill.a * 100);
+    // 1 non-zero, 2 even-odd: decides whether an inner subpath is a hole.
+    if (spec.fillRule) { try { fill.property("ADBE Vector Fill Rule").setValue(spec.fillRule); } catch (eRule) {} }
   }
   if (spec.strokeWidth > 0) {
     var stroke = group.addProperty("ADBE Vector Graphic - Stroke");
@@ -802,23 +810,34 @@ D2AE.buildComp = function (project, spec, data, byCompId, assetItems) {
   // renders a comp that is a single flat rectangle.
   for (i = 0; i < spec.layers.length; i += 1) {
     L = spec.layers[i];
-    if (L.kind === "precomp") {
-      var source = byCompId[L.compId];
-      if (!source) { D2AE.note("missing precomp " + L.compId); continue; }
-      layer = comp.layers.add(source);
-    } else if (L.kind === "shape" || L.kind === "path" || L.kind === "raster") {
-      layer = comp.layers.addShape();
-      if (L.kind === "shape" && L.shape) D2AE.addRect(layer, L.shape);
-      else if (L.kind === "path" && L.path) D2AE.addPath(layer, L.path);
-    } else if (L.kind === "image" && L.image && assetItems && assetItems[L.image.assetId]) {
-      layer = comp.layers.add(assetItems[L.image.assetId]);
-    } else if (L.kind === "text") {
-      layer = comp.layers.addText(L.text.value);
-      D2AE.styleText(layer, L.text);
-      if (L.stagger) D2AE.applyStagger(layer, L.stagger);
-    } else {
+    layer = null;
+    // One layer that AE won't take must not stop the import: it becomes a
+    // named null (so its children still have a parent) and the report says why.
+    try {
+      if (L.kind === "precomp") {
+        var source = byCompId[L.compId];
+        if (!source) { D2AE.note("missing precomp " + L.compId); continue; }
+        layer = comp.layers.add(source);
+      } else if (L.kind === "shape" || L.kind === "path" || L.kind === "raster") {
+        layer = comp.layers.addShape();
+        if (L.kind === "shape" && L.shape) D2AE.addRect(layer, L.shape);
+        else if (L.kind === "path" && L.path) D2AE.addPath(layer, L.path);
+      } else if (L.kind === "image" && L.image && assetItems && assetItems[L.image.assetId]) {
+        layer = comp.layers.add(assetItems[L.image.assetId]);
+      } else if (L.kind === "text") {
+        layer = comp.layers.addText(L.text.value);
+        D2AE.styleText(layer, L.text);
+        if (L.stagger) D2AE.applyStagger(layer, L.stagger);
+      } else {
+        layer = comp.layers.addNull();
+        layer.guideLayer = true;
+      }
+    } catch (eLayer) {
+      D2AE.note(L.name + " could not be built (" + eLayer.toString() + "); it is an empty null instead");
+      try { if (layer) layer.remove(); } catch (eRemove) {}
       layer = comp.layers.addNull();
       layer.guideLayer = true;
+      L = { id: L.id, name: L.name, comment: "Canvas Render could not build this layer: " + eLayer.toString() };
     }
     layer.name = L.name;
     byId[L.id] = layer;
@@ -854,11 +873,15 @@ D2AE.buildComp = function (project, spec, data, byCompId, assetItems) {
     rec = spec.layers[i];
     layer = byId[rec.id];
     if (!layer) continue;
-    D2AE.applyTransform(layer, rec.transform, data.separatePosition);
-    if (rec.mask) D2AE.applyMask(layer, rec.mask);
-    if (rec.effects && rec.effects.length) D2AE.applyEffects(layer, rec.effects);
-    if (rec.loop) D2AE.applyLoop(layer);
-    if (rec.blendMode) { try { layer.blendingMode = BlendingMode[rec.blendMode]; } catch (e) {} }
+    try {
+      D2AE.applyTransform(layer, rec.transform, data.separatePosition);
+      if (rec.mask) D2AE.applyMask(layer, rec.mask);
+      if (rec.effects && rec.effects.length) D2AE.applyEffects(layer, rec.effects);
+      if (rec.loop) D2AE.applyLoop(layer);
+      if (rec.blendMode) { try { layer.blendingMode = BlendingMode[rec.blendMode]; } catch (e) {} }
+    } catch (eTransform) {
+      D2AE.note(rec.name + ": motion could not be applied in full (" + eTransform.toString() + ")");
+    }
   }
 
   // PASS 3b -- clip-path. Sliders first, on every clipping layer, so no mask
@@ -866,14 +889,18 @@ D2AE.buildComp = function (project, spec, data, byCompId, assetItems) {
   for (i = 0; i < spec.layers.length; i += 1) {
     rec = spec.layers[i];
     layer = byId[rec.id];
-    if (layer && rec.clip) D2AE.addClipSliders(layer, rec.clip);
+    if (layer && rec.clip) {
+      try { D2AE.addClipSliders(layer, rec.clip); } catch (eSl) { D2AE.note(rec.name + ": clip sliders failed (" + eSl.toString() + ")"); }
+    }
   }
   for (i = 0; i < spec.layers.length; i += 1) {
     rec = spec.layers[i];
     layer = byId[rec.id];
     if (!layer) continue;
-    if (rec.clip && rec.clip.role === "self") D2AE.addClipMask(layer, rec.clip, true);
-    if (rec.clipBy) D2AE.addClipMask(layer, rec.clipBy, false);
+    try {
+      if (rec.clip && rec.clip.role === "self") D2AE.addClipMask(layer, rec.clip, true);
+      if (rec.clipBy) D2AE.addClipMask(layer, rec.clipBy, false);
+    } catch (eMask) { D2AE.note(rec.name + ": clip mask failed (" + eMask.toString() + ")"); }
   }
 
   // PASS 4 -- in/out points last: AE's own bookkeeping can narrow them when a

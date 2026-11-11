@@ -210,7 +210,7 @@ function boxToLayer(layer, entry) {
   }
   // An SVG shape's layer space is its user space (see svgUserFrame): a box
   // point b sits at (box.xy + b - origin) / unit in layer units.
-  if (layer.kind === 'path') {
+  if (layer.kind === 'path' || (layer.kind === 'null' && entry.user)) {
     const user = svgUserFrame(entry);
     if (user) return { off: [user.origin[0] - entry.box[0], user.origin[1] - entry.box[1]], scale: user.scale };
   }

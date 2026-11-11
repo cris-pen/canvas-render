@@ -17,7 +17,9 @@ const [input, outArg, timesArg, only] = process.argv.slice(2);
 if (!input) { console.error('usage: node scripts/ae-compare.mjs <export> [outDir] [t1,t2,...] [scene]'); process.exit(2); }
 const outDir = path.resolve(outArg || 'ae-compare');
 const engine = new Engine();
-const project = await engine.open(input);
+// PAGE=WxH for a plain HTML page with no size of its own.
+const page = process.env.PAGE ? process.env.PAGE.split('x').map(Number) : null;
+const project = await engine.open(input, page ? { pageSize: page } : {});
 const items = project.scenes.filter((s) => s.selected && s.info && !s.error && (!only || s.name.includes(only))).map((s) => ({ projectId: project.id, sceneId: s.id }));
 const batch = await new Promise((resolve) => {
   const { batchId } = engine.enqueue({ items, settings: { format: 'ae', rate: '24' }, outDir });

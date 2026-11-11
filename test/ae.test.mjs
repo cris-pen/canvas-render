@@ -154,6 +154,22 @@ test('the example export converts to native layers within half a pixel', { skip 
   assert.match(readFileSync(lower.file, 'utf8'), /Clip Left|Clip Right|Clip Top/, 'the clip-path wipe becomes slider-driven masks');
 });
 
+/**
+ * Share of pixels that differ clearly. `opaqueOnly` counts only where the
+ * original paints: a plain page is captured without its page background, which
+ * the layers do have.
+ */
+async function differing(original, preview, { opaqueOnly = false } = {}) {
+  const [a, b] = await Promise.all([original, preview].map((buf) => sharp(buf).ensureAlpha().raw().toBuffer()));
+  let off = 0; let counted = 0;
+  for (let i = 0; i < a.length; i += 4) {
+    if (opaqueOnly && a[i + 3] === 0) continue;
+    counted += 1;
+    if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 96) off += 1;
+  }
+  return counted ? (off / counted) * 100 : 0;
+}
+
 test('the converted layers redraw like the browser', { skip }, async () => {
   assert.ok(converted, 'needs the conversion above');
   const { previewFrames } = await import('../engine/src/ae/preview.mjs');
@@ -167,12 +183,7 @@ test('the converted layers redraw like the browser', { skip }, async () => {
     const ir = JSON.parse(readFileSync(j.result.file.replace(/\.jsx$/, '.d2ae.json'), 'utf8'));
     const shots = await previewFrames({ browser, roots: e.roots, scene, info: scene.info, ir, times: [2.1], assetDir: j.result.folder, wireContext, clockInit: INIT });
     for (const s of shots) {
-      const [a, b] = await Promise.all([s.original, s.preview].map((buf) => sharp(buf).removeAlpha().raw().toBuffer()));
-      let off = 0;
-      for (let i = 0; i < a.length; i += 3) {
-        if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 96) off += 1;
-      }
-      const pct = (off / (a.length / 3)) * 100;
+      const pct = await differing(s.original, s.preview);
       assert.ok(pct < 0.5, `${j.sceneName} at ${s.t}s: ${pct.toFixed(2)}% of pixels differ`);
     }
   }
@@ -197,6 +208,43 @@ test('an element AE cannot express comes in as rendered footage', { skip }, asyn
   assert.ok(meta.width < 400 && meta.height < 400, `cropped to what it painted, not the whole frame (${meta.width}x${meta.height})`);
   const { data } = await sharp(first).extractChannel(3).raw().toBuffer({ resolveWithObject: true });
   assert.ok(data.some((v) => v === 255) && data.some((v) => v === 0), 'opaque card on a transparent surround');
+});
+
+test('SVG groups, subpaths, arcs and references convert, and redraw like the browser', { skip }, async () => {
+  const e = await getEngine();
+  const project = await e.open(path.join(FIXTURES, 'ae-svg.html'), { pageSize: [640, 360] });
+  const batch = await run([{ projectId: project.id, sceneId: project.scenes[0].id }], { format: 'ae', rate: '24' }, tmp('cr-ae-svg-'));
+  const r = batch.jobs[0].result;
+  const ir = JSON.parse(readFileSync(r.file.replace(/\.jsx$/, '.d2ae.json'), 'utf8'));
+  const all = ir.comps.flatMap((c) => c.layers);
+  const byName = (n) => all.find((l) => l.name === n);
+  assert.ok(!all.some((l) => ['sky', 'unused', 'defs', 'stop'].includes(l.name)), 'definitions are not layers');
+  assert.equal(byName('cluster').kind, 'null', 'a <g> is a null');
+  assert.equal(byName('inner').parentId, byName('cluster').id, 'and keeps its nesting');
+  const icon = pathToShape(byName('frame-icon').path);
+  assert.deepEqual(icon.contours.map((c) => c.vertices.length), [4, 4], 'two subpaths, two AE paths');
+  assert.equal(byName('frame-icon').path.fillRule, 'evenodd');
+  assert.ok(pathToShape(byName('ring').path).contours[0].vertices.length >= 4, 'arcs become curves, not a chord');
+  assert.equal(pathToShape(byName('panel').path).contours[0].vertices.length, 8, 'a rounded rect keeps its corners');
+  assert.equal(byName('dot').path.strokeWidth, 0, 'no stroke paint, no stroke');
+  assert.ok(byName('morph').path.morph, 'the path that changes shape is keyed');
+  for (const name of ['trail', 'badge-label', 'swatch']) {
+    assert.equal(byName(name).kind, 'image', `${name} comes in as footage`);
+  }
+  const clip = ir.comps.find((c) => c.pageShift);
+  assert.ok(clip && clip.layers.some((l) => l.name === 'badge-label'), 'footage inside a clip comp stays in it');
+  assert.ok(!all.some((l) => l.kind === 'raster'), 'no empty placeholders');
+  assert.match(readFileSync(r.file, 'utf8'), /contours: \[/);
+
+  const { previewFrames } = await import('../engine/src/ae/preview.mjs');
+  const { wireContext } = await import('../engine/src/browser.mjs');
+  const { INIT } = await import('../engine/src/ae/capture.mjs');
+  const scene = e.projects.get(project.id).scenes[0];
+  const shots = await previewFrames({ browser: await e.getBrowser(), roots: e.roots, scene, info: scene.info, ir, times: [0.5, 1], assetDir: r.folder, wireContext, clockInit: INIT });
+  for (const s of shots) {
+    const pct = await differing(s.original, s.preview, { opaqueOnly: true });
+    assert.ok(pct < 1, `at ${s.t}s: ${pct.toFixed(2)}% of pixels differ`);
+  }
 });
 
 test('a background plate fills behind the design, and can replace its own fill', { skip }, async () => {

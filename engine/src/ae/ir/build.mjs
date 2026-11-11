@@ -21,6 +21,7 @@ import { detectStaggers } from './stagger.mjs';
 import { Decisions } from './decisions.mjs';
 import { applyClipPaths } from './clippath.mjs';
 import { keyPathMorph } from './morph.mjs';
+import { pathToShape } from '../emit/jsx.mjs';
 import { repeatAxes, tileParams, buildTileComp } from './tile.mjs';
 import { collectSubtree } from './precomp.mjs';
 import { detectLoops, windowFrames } from './loops.mjs';
@@ -888,7 +889,7 @@ function layerName(node, firstEntry, used) {
   if (isBareTag && firstEntry) {
     const text = (firstEntry.text || '').trim().replace(/\s+/g, ' ');
     if (text) base = text.length > 28 ? `${text.slice(0, 27)}\u2026` : text;
-    else if (node.role === 'svgShape') base = node.tag;
+    else if (node.role === 'svgShape' || node.role === 'svgGroup' || node.role === 'svgOther') base = node.tag;
   }
   if (isBareTag && base === node.tag) base = node.tag;
   let name = base;
@@ -941,6 +942,7 @@ function bakeGroupOpacity(host, groupLayer, ids, frameTimes) {
  */
 function paintsContent(entry, role) {
   if (!entry || !entry.present) return false;
+  if (role === 'svgGroup') return false;
   if (role && role !== 'box') return true;
   return paintsAnything(entry);
 }
@@ -968,10 +970,39 @@ function buildLayer(analysis, byId, report, opts, inheritsThreeD) {
   if (!present.length) return null;
   const firstEntry = present[0].entry;
 
+  // --- SVG geometry ---------------------------------------------------------
+  // Decided before the tier: a path whose structure changes over time (points
+  // added as it grows, a different shape swapped in) can't be keyed in AE, which
+  // only moves a fixed set of points, so it goes to the raster fallback.
+  let morph = null;
+  let hasGeometry = false;
+  if (node.role === 'svgShape') {
+    hasGeometry = perFrame.some((p) => p.entry && p.entry.present && pathToShape({ d: p.entry.d || null, geom: p.entry.geom || null, tag: node.tag }).contours.length > 0);
+    const unit = firstEntry && firstEntry.user ? Math.max(firstEntry.user.scale[0], firstEntry.user.scale[1]) : 1;
+    morph = hasGeometry ? keyPathMorph(analysis, TOLERANCE.position / (unit || 1), node.tag) : null;
+  }
+  const shown = (p) => p.entry && p.entry.present && p.entry.style.visibility !== 'hidden' && p.entry.style.opacity > 0;
+  // Paint servers and references the shape layer can't carry: gradient or
+  // pattern fills and strokes, url() clip paths, masks and filters. Left as a
+  // plain shape these would come in invisible or unclipped.
+  const isUrl = (v) => typeof v === 'string' && v.includes('url(');
+  const svgRef = (node.role === 'svgShape' || node.role === 'svgGroup') && perFrame.find((p) => shown(p)
+    && [p.entry.style.fill, p.entry.style.stroke, p.entry.style.clipPath, p.entry.style.filter, p.entry.style.maskImage, p.entry.style.svgMask].some(isUrl));
+  const svgRaster = node.role === 'svgOther' && perFrame.some(shown)
+    ? `SVG <${node.tag}> has no layer equivalent here, so it comes in as rendered footage`
+    : svgRef
+      ? 'uses an SVG gradient, pattern, clip path, mask or filter by reference, so it comes in as rendered footage'
+    : morph && morph.mismatch
+      ? `path changes its number of points over time (from ${morph.mismatch.vertices[0]} to ${morph.mismatch.vertices[1]} at ${morph.mismatch.time.toFixed(2)}s), which AE path keyframes can't follow, so it comes in as rendered footage`
+      : null;
+
   // --- tier -----------------------------------------------------------------
   let tier = 'A';
   const sequenceAsset = opts.sequenceByNode && opts.sequenceByNode.get(node.id);
-  if (node.role === 'canvas' || node.role === 'video' || analysis.unrepresentable) {
+  if (svgRaster) {
+    tier = 'C';
+    report.rasterised.push({ id: node.id, name: node.name, reason: svgRaster });
+  } else if (node.role === 'canvas' || node.role === 'video' || analysis.unrepresentable) {
     tier = 'C';
     report.rasterised.push({
       id: node.id,
@@ -1008,7 +1039,8 @@ function buildLayer(analysis, byId, report, opts, inheritsThreeD) {
   else if (node.role === 'text') kind = 'text';
   else if (node.role === 'image') kind = 'image';
   else if (node.role === 'imageBox') kind = 'shape';
-  else if (node.role === 'svgShape') kind = 'path';
+  else if (node.role === 'svgShape') kind = hasGeometry ? 'path' : 'null';
+  else if (node.role === 'svgGroup' || node.role === 'svgOther') kind = 'null';
   else if (paints) kind = 'shape';
 
   // --- transform tracks -----------------------------------------------------
@@ -1143,16 +1175,9 @@ function buildLayer(analysis, byId, report, opts, inheritsThreeD) {
   if (kind === 'text') layer.text = buildText(analysis);
   if (kind === 'path') {
     layer.path = buildPath(analysis);
-    const unit = firstEntry && firstEntry.user ? Math.max(firstEntry.user.scale[0], firstEntry.user.scale[1]) : 1;
-    const morph = keyPathMorph(analysis, TOLERANCE.position / (unit || 1));
-    if (morph && morph.mismatch) {
-      report.approximations.push({
-        id: node.id, name: node.name,
-        note: `path changes shape (${morph.mismatch.vertices[0]} to ${morph.mismatch.vertices[1]} points at ${morph.mismatch.time.toFixed(2)}s); only its first outline was kept`,
-      });
-    } else if (morph) {
-      layer.path.morph = morph;
-    }
+    if (morph && !morph.mismatch) layer.path.morph = morph;
+    const flat = pathToShape(layer.path).approximated;
+    if (flat.length) report.approximations.push({ id: node.id, name: node.name, note: [...new Set(flat)].join('; ') });
   }
   if (kind === 'image') {
     if (imageAsset) {
@@ -1305,7 +1330,10 @@ function buildText(analysis) {
 }
 
 function buildPath(analysis) {
-  const first = analysis.perFrame.find((p) => p.entry && p.entry.present);
+  // The first frame that has an outline: a path can start out empty and get its
+  // `d` later.
+  const first = analysis.perFrame.find((p) => p.entry && p.entry.present && (p.entry.d || p.entry.geom))
+    || analysis.perFrame.find((p) => p.entry && p.entry.present);
   const dashOffsets = fillGaps(analysis.perFrame.map((p) => ({
     t: p.time, v: p.entry && p.entry.present ? p.entry.style.strokeDashoffset : null,
   })));
@@ -1314,19 +1342,27 @@ function buildPath(analysis) {
     const col = parseColor(p.entry.style.stroke);
     return { t: p.time, v: col ? col.rgb[c] : 0 };
   })));
+  // SVG's computed stroke-width is 1px even with no stroke at all, so the
+  // width only counts when there is a stroke paint to go with it.
+  const stroked = analysis.perFrame.some((p) => {
+    if (!p.entry || !p.entry.present) return false;
+    const c = parseColor(p.entry.style.stroke);
+    return c && c.a > 0;
+  });
   return {
     d: first.entry.d || null,
     geom: first.entry.geom || null,
     tag: analysis.node.tag,
     bbox: first.entry.bbox || null,
     totalLength: first.entry.pathLength ?? null,
-    strokeWidth: first.entry.style.strokeWidth || 0,
+    strokeWidth: stroked ? (first.entry.style.strokeWidth || 0) : 0,
     strokeColor: buildVectorTrack(strokeChannels, 'color'),
     fillColor: parseColor(first.entry.style.fill),
     dashArray: parseDashArray(first.entry.style.strokeDasharray),
     dashOffset: buildScalarTrack(dashOffsets, 'length'),
     lineCap: first.entry.style.strokeLinecap,
     lineJoin: first.entry.style.strokeLinejoin,
+    fillRule: first.entry.style.fillRule || 'nonzero',
   };
 }
 

@@ -149,6 +149,8 @@ export function buildClipComp(rootComp, clipper, geom, options = {}) {
       backgroundColor: { rgb: [0, 0, 0], a: 0 },
       camera: null,
       layers,
+      // Page position = comp position - pageShift, while the clipper stays put.
+      pageShift: shift,
     },
     layer: {
       id: `${clipper.id}-clip`,

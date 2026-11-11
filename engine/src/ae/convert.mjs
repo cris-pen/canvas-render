@@ -140,6 +140,16 @@ export async function convertScene(env, job) {
       ir.report.approximations.push({ name: 'raster fallback', note: `${dropped.length} layer(s) baked into rasterised footage` });
     }
   }
+  // What the fallback could not reach (nested two comps deep) stays an empty,
+  // named shape layer, and the report says so rather than leaving it to be
+  // discovered in the comp.
+  const placeholders = new Set(ir.comps.flatMap((c) => c.layers.filter((l) => l.kind === 'raster').map((l) => l.id)));
+  for (const r of ir.report.rasterised) {
+    if (placeholders.has(r.id)) r.reason += ' (it sits inside a nested comp the footage can\'t be placed in yet, so it is an empty placeholder)';
+  }
+  for (const c of ir.comps) {
+    for (const l of c.layers) if (l.kind === 'raster') l.comment = 'Canvas Render placeholder: render this element separately and drop it in here.';
+  }
 
   // Assets sit next to the .jsx, which finds them relative to itself.
   for (const asset of ir.assets || []) {

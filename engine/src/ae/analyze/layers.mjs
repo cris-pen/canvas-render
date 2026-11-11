@@ -111,11 +111,16 @@ function svgReferenceOrigin(entry) {
  * SVG shapes: layer space is user space (see svgUserFrame). `roles` gives the
  * element's and the parent's probe roles; without it everything is HTML.
  */
+const SVG_SPACE = new Set(['svgShape', 'svgGroup', 'svgOther']);
+
+/** Roles whose layer space is SVG user space rather than a CSS box. */
+export const inSvgSpace = (role) => SVG_SPACE.has(role);
+
 export function layerFrame(entry, parentEntry, roles) {
   const [X, Y] = entry.box;
-  const self = roles && roles.self === 'svgShape' ? svgUserFrame(entry) : null;
+  const self = roles && SVG_SPACE.has(roles.self) ? svgUserFrame(entry) : null;
   const parentPresent = parentEntry && parentEntry.present;
-  const parent = parentPresent && roles && roles.parent === 'svgShape' ? svgUserFrame(parentEntry) : null;
+  const parent = parentPresent && roles && SVG_SPACE.has(roles.parent) ? svgUserFrame(parentEntry) : null;
   const ref = self ? svgReferenceOrigin(entry) : [0, 0];
   return {
     // Page position of the layer's (0,0) with every transform off.

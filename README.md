@@ -36,10 +36,10 @@ Choose **After Effects (editable layers)** as the format, or the **After Effects
 
 - `clip-path` wipes (inset, circle, ellipse, polygon) as masks driven by Slider Controls on the clipping layer, so a wipe is one keyframed slider instead of a mask path to redraw.
 - Letters animated one after another become one text layer with a text animator and a range selector per letter.
-- SVG paths keep their own coordinates, and a path whose shape changes over time is keyed on the Path property. A stroke that draws on becomes Trim Paths.
+- SVG comes in as shape layers in its own coordinates: groups become nulls, a path with several subpaths becomes several paths in one shape group (so cut-outs stay cut out), arcs and rounded rects keep their curves, and a path whose shape changes over time is keyed on the Path property. A stroke that draws on becomes Trim Paths.
 - CSS 3D and `perspective()` become 3D layers and a comp camera.
 - Gradients become Gradient Ramp effects. Ones with three or more stops come in as two-stop ramps unless you tick **Exact gradients**, which brings them in as bitmaps instead.
-- Anything After Effects can't rebuild, like a 3D skew, is rendered on its own with alpha and placed as footage in the right spot. Canvas elements come in as image sequences.
+- Anything After Effects can't rebuild is rendered on its own with alpha and placed as footage in the right spot: a 3D skew, SVG text, an SVG gradient or pattern fill, a `url()` clip path, mask or filter, or a path that gains or loses points as it animates. Canvas elements come in as image sequences. If one layer still can't be built, the script makes it an empty null, carries on with the rest, and lists it in the notes.
 
 Every conversion is checked against the browser before it's written: each layer's keyframes are replayed against the measured position of its element on every frame. The queue shows how many layers came in, and a note for anything that was approximated or rendered as footage. The fonts the scene uses are copied to a `fonts` folder beside the script, so you can install any you're missing first.
 
@@ -112,7 +112,7 @@ For After Effects, the same page is measured instead of photographed. On every f
 - **Share links.** Claude artifact links need you to be signed in, so the app can't fetch them. Open the artifact, choose **Export > Download as .zip**, and drop the zip in.
 - **Audio.** Boards can carry audio, but it isn't mixed into renders yet.
 - **Change detection resolution.** Frames are compared at 480 pixels wide. A very small, faint change, like a one-pixel line shifting slightly in color, can be missed. Turn off **Re-render only what changed** (or pass `--full`) for a clean render.
-- **After Effects.** A line of text with differently styled words inside it (a `<b>`, a `<sup>`) comes in as separate pieces rather than one text layer with mixed styles. Animated font size and text colour use their first value. Web-only fonts (WOFF) can't be installed on a Mac, so the notes ask for the desktop version. Elliptical radial gradients become circular ramps of the same area. Kerning is matched in After Effects 24.0 and later.
+- **After Effects.** A line of text with differently styled words inside it (a `<b>`, a `<sup>`) comes in as separate pieces rather than one text layer with mixed styles. Animated font size and text colour use their first value. Web-only fonts (WOFF) can't be installed on a Mac, so the notes ask for the desktop version. Elliptical radial gradients become circular ramps of the same area. Kerning is matched in After Effects 24.0 and later. Footage for the raster fallback can be placed in the main comp, a perspective comp or a clip comp; something nested deeper than that is left as a named, empty placeholder and listed in the notes.
 - **Background plates.** Still images only, not video. **Replace** clears the board's top-level fill; a full-size background element inside the board stays.
 - **Signing.** The app isn't signed or notarized yet. The CI build is for Apple silicon; on an Intel Mac, `npm run dist` builds an Intel copy.
 

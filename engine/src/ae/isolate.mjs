@@ -170,10 +170,23 @@ export function rasterTargets(ir) {
     for (const l of c.layers) {
       if (l.kind !== 'raster') continue;
       if (c === root) ids.push(l.id);
-      else if (root.layers.some((x) => x.kind === 'precomp' && x.compId === c.id && x.id === l.id)) ids.push(l.id);
+      else if (root.layers.some((x) => x.kind === 'precomp' && x.compId === c.id && (x.id === l.id || c.pageShift))) ids.push(l.id);
     }
   }
   return ids;
+}
+
+const moves = (track) => !!(track && track.keys && track.keys.length);
+
+/** Whether a root layer and every parent above it hold still for the whole run. */
+function chainStill(root, id) {
+  const byId = new Map(root.layers.map((l) => [l.id, l]));
+  let l = byId.get(id);
+  while (l) {
+    if (Object.values(l.transform || {}).some(moves)) return false;
+    l = l.parentId === null || l.parentId === undefined ? null : byId.get(l.parentId);
+  }
+  return true;
 }
 
 /**
@@ -181,11 +194,90 @@ export function rasterTargets(ir) {
  * the footage, so their layers go, and any comp no longer reachable from the
  * root goes with them. Returns the dropped layer ids.
  */
+function descendants(layers, id) {
+  const below = new Set([id]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const l of layers) {
+      if (!below.has(l.id) && l.parentId !== null && l.parentId !== undefined && below.has(l.parentId)) { below.add(l.id); grew = true; }
+    }
+  }
+  below.delete(id);
+  return below;
+}
+
+function footageAsset(layer, shot) {
+  return {
+    id: `raster-${layer.id}`,
+    kind: shot.static ? 'still' : 'sequence',
+    ext: '.png',
+    files: shot.static ? [shot.files[0]] : shot.files,
+    frames: shot.static ? 1 : shot.frames,
+    width: shot.width,
+    height: shot.height,
+    source: `${layer.name} rendered in isolation, ${shot.frames} frame(s) at ${shot.width}x${shot.height}${shot.static ? ' (static)' : ''}`,
+  };
+}
+
+function footageLayer(layer, shot, offset, rate) {
+  const stat = (v) => ({ static: v, dims: Array.isArray(v) ? v.length : 1, maxError: 0 });
+  return {
+    id: layer.id,
+    name: layer.kind === 'precomp' ? layer.name.replace(/ \(3D\)$/, '') : layer.name,
+    parentId: null,
+    kind: 'image',
+    tier: 'C',
+    threeD: false,
+    role: layer.role,
+    inPoint: 0,
+    outPoint: (shot.frames - 1) * rate.den / rate.num,
+    loop: null,
+    image: { assetId: `raster-${layer.id}`, natural: [shot.width, shot.height], objectFit: 'fill', sequence: !shot.static },
+    transform: {
+      anchorPoint: stat([0, 0]),
+      position: stat([offset[0], offset[1]]),
+      scale: stat([100, 100]),
+      opacity: stat(100),
+      rotation: stat(0),
+    },
+    // Its own filters, opacity and motion are in the pixels already. Blending
+    // is not: the footage was drawn over nothing, so it still blends in AE.
+    blendMode: layer.blendMode,
+    effects: [],
+    rasterised: true,
+  };
+}
+
 export function applyIsolation(ir, isolated, rate) {
   const root = rootOf(ir);
-  const stat = (v) => ({ static: v, dims: Array.isArray(v) ? v.length : 1, maxError: 0 });
   const dropped = new Set();
   for (const [id, shot] of isolated) {
+    // Inside a clip comp: the footage already carries the clipping, so it goes
+    // in that comp at its page position (shifted into the comp's space) while
+    // the clipped content holds still, or straight into the root above the
+    // clip comp when it moves.
+    const clipComp = ir.comps.find((c) => c !== root && c.pageShift && c.layers.some((l) => l.id === id));
+    if (clipComp) {
+      const k = clipComp.layers.findIndex((l) => l.id === id);
+      const layer = clipComp.layers[k];
+      const holderIndex = root.layers.findIndex((l) => l.kind === 'precomp' && l.compId === clipComp.id);
+      const below = descendants(clipComp.layers, id);
+      clipComp.layers = clipComp.layers.filter((l) => !below.has(l.id));
+      for (const d of below) dropped.add(d);
+      if (shot.empty) { clipComp.layers = clipComp.layers.filter((l) => l.id !== id); dropped.add(id); continue; }
+      const still = holderIndex !== -1 && chainStill(root, root.layers[holderIndex].id);
+      const offset = still ? [shot.offset[0] + clipComp.pageShift[0], shot.offset[1] + clipComp.pageShift[1]] : shot.offset;
+      const footage = footageLayer(layer, shot, offset, rate);
+      if (still) {
+        clipComp.layers[clipComp.layers.findIndex((l) => l.id === id)] = footage;
+      } else {
+        clipComp.layers = clipComp.layers.filter((l) => l.id !== id);
+        root.layers.splice(holderIndex + 1, 0, footage);
+      }
+      ir.assets.push(footageAsset(layer, shot));
+      continue;
+    }
     const index = root.layers.findIndex((l) => l.id === id);
     if (index === -1) continue;
     const layer = root.layers[index];
@@ -203,44 +295,8 @@ export function applyIsolation(ir, isolated, rate) {
     below.delete(id);
     for (const d of below) dropped.add(d);
     if (shot.empty) { dropped.add(id); continue; }
-    const asset = {
-      id: `raster-${id}`,
-      kind: shot.static ? 'still' : 'sequence',
-      ext: '.png',
-      files: shot.static ? [shot.files[0]] : shot.files,
-      frames: shot.static ? 1 : shot.frames,
-      width: shot.width,
-      height: shot.height,
-      source: `${layer.name} rendered in isolation, ${shot.frames} frame(s) at ${shot.width}x${shot.height}${shot.static ? ' (static)' : ''}`,
-    };
-    ir.assets.push(asset);
-    const name = layer.kind === 'precomp' ? layer.name.replace(/ \(3D\)$/, '') : layer.name;
-    const replacement = {
-      id: layer.id,
-      name,
-      parentId: null,
-      kind: 'image',
-      tier: 'C',
-      threeD: false,
-      role: layer.role,
-      inPoint: 0,
-      outPoint: (shot.frames - 1) * rate.den / rate.num,
-      loop: null,
-      image: { assetId: asset.id, natural: [shot.width, shot.height], objectFit: 'fill', sequence: !shot.static },
-      transform: {
-        anchorPoint: stat([0, 0]),
-        position: stat([shot.offset[0], shot.offset[1]]),
-        scale: stat([100, 100]),
-        opacity: stat(100),
-        rotation: stat(0),
-      },
-      // Its own filters, opacity and motion are in the pixels already. Blending
-      // is not: the footage was drawn over nothing, so it still blends in AE.
-      blendMode: layer.blendMode,
-      effects: [],
-      rasterised: true,
-    };
-    root.layers[index] = replacement;
+    ir.assets.push(footageAsset(layer, shot));
+    root.layers[index] = footageLayer(layer, shot, shot.offset, rate);
   }
   if (dropped.size) root.layers = root.layers.filter((l) => !dropped.has(l.id));
   // Comps nothing points at any more (a perspective comp whose subject became

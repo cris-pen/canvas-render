@@ -38,6 +38,14 @@
   };
 
   const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'LINK', 'META', 'TITLE', 'HEAD', 'NOSCRIPT', 'TEMPLATE', 'BR']);
+  // SVG elements that never paint where they sit: definitions, paint servers,
+  // clip and mask sources, filter primitives (fe*), metadata.
+  const SVG_SKIP = new Set(['defs', 'linearGradient', 'radialGradient', 'stop', 'clipPath', 'mask', 'filter', 'symbol',
+    'marker', 'pattern', 'title', 'desc', 'metadata', 'style', 'script', 'animate', 'animateTransform', 'animateMotion', 'set', 'mpath']);
+  // SVG elements whose geometry becomes an AE shape path.
+  const SVG_GEOMETRY = new Set(['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon']);
+  // SVG containers: a null in AE, sharing its user space with its children.
+  const SVG_GROUP = new Set(['g', 'a', 'switch', 'svg']);
 
   function warn(code, detail) {
     state.warnings.push({ code, detail, generation: state.generation });
@@ -92,7 +100,15 @@
     if (tag === 'CANVAS') return 'canvas';
     if (tag === 'IMG' || tag === 'PICTURE') return 'image';
     if (tag === 'VIDEO') return 'video';
-    if (el.namespaceURI === NS_SVG) return tag === 'svg' ? 'svgRoot' : 'svgShape';
+    if (el.namespaceURI === NS_SVG) {
+      const outer = tag === 'svg' && !(el.parentElement && el.parentElement.namespaceURI === NS_SVG);
+      if (outer) return 'svgRoot';
+      if (SVG_GEOMETRY.has(tag)) return 'svgShape';
+      if (SVG_GROUP.has(tag)) return 'svgGroup';
+      // <text>, <image>, <use>, <foreignObject>: painted, but not as a path.
+      // They go to the raster fallback, whole.
+      return 'svgOther';
+    }
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return 'control';
     // A text leaf is an element whose direct children include a non-empty text
     // node; that is the unit that becomes an AE text layer.
@@ -133,6 +149,7 @@
 
     const walk = (el, parentId, depth) => {
       if (SKIP_TAGS.has(el.tagName)) return;
+      if (el.namespaceURI === NS_SVG && (SVG_SKIP.has(el.tagName) || /^fe[A-Z]/.test(el.tagName))) return;
       const cs = getComputedStyle(el);
       const existing = el.getAttribute('data-d2ae-id');
       let id = existing ? Number(existing) : null;
@@ -172,7 +189,7 @@
       }
       seen.add(id);
       const role = state.nodesById.get(id).role;
-      if (role === 'canvas' || role === 'video') return;
+      if (role === 'canvas' || role === 'video' || role === 'svgOther') return;
       for (const child of el.children) walk(child, id, depth + 1);
     };
     walk(root, null, 0);
@@ -205,7 +222,7 @@
     return sheet;
   }
 
-  function styleSnapshot(cs) {
+  function styleSnapshot(cs, el) {
     return {
       display: cs.display,
       visibility: cs.visibility,
@@ -248,11 +265,14 @@
       // SVG paint
       fill: cs.fill,
       stroke: cs.stroke,
+      maskImage: cs.maskImage || cs.webkitMaskImage || 'none',
+      svgMask: el.namespaceURI === NS_SVG ? (el.getAttribute('mask') || 'none') : 'none',
       strokeWidth: parseFloat(cs.strokeWidth),
       strokeDasharray: cs.strokeDasharray,
       strokeDashoffset: parseFloat(cs.strokeDashoffset),
       strokeLinecap: cs.strokeLinecap,
       strokeLinejoin: cs.strokeLinejoin,
+      fillRule: cs.fillRule,
       fillOpacity: parseFloat(cs.fillOpacity),
       strokeOpacity: parseFloat(cs.strokeOpacity),
     };
@@ -291,7 +311,7 @@
       const r = el.getBoundingClientRect();
       flatRects[i] = [r.x, r.y, r.width, r.height];
       userFrames[i] = null;
-      if (node.role === 'svgShape' && typeof el.getScreenCTM === 'function') {
+      if ((node.role === 'svgShape' || node.role === 'svgGroup' || node.role === 'svgOther') && typeof el.getScreenCTM === 'function') {
         try {
           const c = el.getScreenCTM();
           if (c) userFrames[i] = [c.a, c.b, c.c, c.d, c.e, c.f];
@@ -314,7 +334,7 @@
         out[i] = { id: node.id, present: false }; continue;
       }
       const cs = getComputedStyle(el);
-      const style = styleSnapshot(cs);
+      const style = styleSnapshot(cs, el);
       const matrix = parseMatrix(cs.transform);
       const origin = parseOrigin(cs.transformOrigin);
 
@@ -371,7 +391,13 @@
         if (typeof el.getTotalLength === 'function') {
           try { entry.pathLength = el.getTotalLength(); } catch { /* not a geometry element */ }
         }
-        if (el.tagName === 'path') entry.d = el.getAttribute('d');
+        if (el.tagName === 'path') {
+          // The computed `d` covers both the attribute and a CSS `d: path(...)`
+          // (which can be animated and overrides the attribute).
+          const cd = cs.d;
+          const m = cd && cd !== 'none' ? /^path\((["'])([\s\S]*)\1\)$/.exec(cd) : null;
+          entry.d = m ? m[2] : el.getAttribute('d');
+        }
         else if (el.tagName === 'circle') entry.geom = { cx: el.cx.baseVal.value, cy: el.cy.baseVal.value, r: el.r.baseVal.value };
         else if (el.tagName === 'ellipse') entry.geom = { cx: el.cx.baseVal.value, cy: el.cy.baseVal.value, rx: el.rx.baseVal.value, ry: el.ry.baseVal.value };
         else if (el.tagName === 'rect') entry.geom = { x: el.x.baseVal.value, y: el.y.baseVal.value, width: el.width.baseVal.value, height: el.height.baseVal.value, rx: el.rx.baseVal.value, ry: el.ry.baseVal.value };

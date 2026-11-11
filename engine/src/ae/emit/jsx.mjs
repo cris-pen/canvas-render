@@ -260,7 +260,7 @@ function encodeLayer(layer, separatePosition) {
     outPoint: layer.outPoint,
     loop: layer.loop ? true : false,
     blendMode: layer.blendMode && layer.blendMode !== 'NORMAL' ? layer.blendMode : null,
-    comment: `d2ae tier ${layer.tier} | ${layer.role}`,
+    comment: layer.comment || `Canvas Render tier ${layer.tier} | ${layer.role}`,
     transform: {
       threeD: layer.threeD,
       anchorPoint: encodeTrack(t.anchorPoint),
@@ -447,10 +447,9 @@ function encodePath(layer) {
   const p = layer.path;
   const geometry = pathToShape(p);
   const out = {
-    vertices: geometry.vertices,
-    inTangents: geometry.inTangents,
-    outTangents: geometry.outTangents,
-    closed: geometry.closed,
+    // One AE Path per subpath, all in one shape group.
+    contours: geometry.contours.map((c) => ({ vertices: c.vertices, inTangents: c.inTangents, outTangents: c.outTangents, closed: c.closed })),
+    fillRule: p.fillRule === 'evenodd' ? 2 : 1,
     strokeWidth: p.strokeWidth,
     strokeColor: encodeTrack(p.strokeColor),
     fill: p.fillColor && p.fillColor.a > 0 ? { c: p.fillColor.rgb, a: p.fillColor.a } : null,
@@ -458,15 +457,15 @@ function encodePath(layer) {
     trim: null,
     morph: null,
   };
-  // An animated `d`: linear keys on the Path property, one per morph key.
-  if (p.morph && p.morph.keys && p.morph.keys.length > 1) {
-    out.morph = {
-      t: p.morph.keys.map((k) => k.t),
-      v: p.morph.keys.map((k) => k.vertices),
-      i: p.morph.straight ? null : p.morph.keys.map((k) => k.inTangents),
-      o: p.morph.straight ? null : p.morph.keys.map((k) => k.outTangents),
-      closed: p.morph.closed,
-    };
+  // An animated `d`: linear keys on each subpath's Path property.
+  if (p.morph && p.morph.keys && p.morph.keys.length > 1 && p.morph.closed.length === out.contours.length) {
+    out.morph = p.morph.closed.map((closed, k) => ({
+      t: p.morph.keys.map((key) => key.t),
+      v: p.morph.keys.map((key) => key.contours[k].vertices),
+      i: p.morph.straight ? null : p.morph.keys.map((key) => key.contours[k].inTangents),
+      o: p.morph.straight ? null : p.morph.keys.map((key) => key.contours[k].outTangents),
+      closed,
+    }));
   }
   // stroke-dashoffset animating against a dasharray equal to the path length is
   // the canonical CSS draw-on. AE says the same thing with Trim Paths, which is
@@ -491,109 +490,203 @@ function encodePath(layer) {
 }
 
 /**
- * Convert an SVG path `d` into AE Shape vertex/tangent arrays.
- * Handles M/L/H/V/C/S/Q/T/Z, absolute and relative. Quadratics are elevated to
- * cubics exactly. Arcs are approximated by their chord, because AE shapes have
- * no arc primitive -- the caller reports that rather than hiding it.
+ * Convert an SVG path `d` (or a basic shape's geometry) into AE Shape data.
+ *
+ * An AE Shape is ONE contour, so a `d` with several subpaths (every `M` after
+ * the first: an icon's separate strokes, a ring's inner edge) comes back as a
+ * list of contours, each its own Path in one shape group so the fill and
+ * stroke cover them all. The first contour is also spread on the result, for
+ * callers that only ever see one.
+ *
+ * Handles M/L/H/V/C/S/Q/T/A/Z, absolute and relative. Quadratics are elevated
+ * to cubics exactly; elliptical arcs become cubic segments of at most 90
+ * degrees each (within a few thousandths of the radius).
  */
 export function pathToShape(p) {
-  const empty = { vertices: [], inTangents: [], outTangents: [], closed: false, approximated: [] };
-  if (!p) return empty;
-  if (!p.d) return geomToShape(p) || empty;
-  const tokens = p.d.match(/[MmLlHhVvCcSsQqTtAaZz]|[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?/g);
-  if (!tokens) return empty;
+  const done = (contours, approximated = []) => {
+    const first = contours[0] || { vertices: [], inTangents: [], outTangents: [], closed: false };
+    return { ...first, contours, approximated };
+  };
+  if (!p) return done([]);
+  if (!p.d) {
+    const g = geomToShape(p);
+    return done(g && g.vertices.length ? [g] : []);
+  }
+  const tokens = p.d.match(/[MmLlHhVvCcSsQqTtAaZz]|[-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?/g);
+  if (!tokens) return done([]);
 
-  const vertices = [];
-  const inT = [];
-  const outT = [];
-  const approximated = [];
-  let closed = false;
+  const contours = [];
+  let cur = null;
   let x = 0; let y = 0;
   let startX = 0; let startY = 0;
-  let lastControl = null;
+  let lastCubic = null;
+  let lastQuad = null;
   let cmd = null;
   let i = 0;
 
-  const push = (px, py) => { vertices.push([px, py]); inT.push([0, 0]); outT.push([0, 0]); };
-  const nextNum = () => { i += 1; return Number(tokens[i]); };
+  const open = (px, py) => {
+    if (cur && cur.vertices.length) contours.push(cur);
+    cur = { vertices: [[px, py]], inTangents: [[0, 0]], outTangents: [[0, 0]], closed: false };
+  };
+  const ensure = () => { if (!cur) open(x, y); };
+  const lineTo = (px, py) => {
+    ensure();
+    cur.vertices.push([px, py]); cur.inTangents.push([0, 0]); cur.outTangents.push([0, 0]);
+  };
+  const cubicTo = (c1x, c1y, c2x, c2y, ex, ey) => {
+    ensure();
+    const n = cur.vertices.length - 1;
+    const [px, py] = cur.vertices[n];
+    cur.outTangents[n] = [c1x - px, c1y - py];
+    cur.vertices.push([ex, ey]); cur.inTangents.push([c2x - ex, c2y - ey]); cur.outTangents.push([0, 0]);
+  };
+  // Browsers draw a malformed path up to the first error; so does this.
+  const BAD = {};
+  const num = () => {
+    i += 1;
+    const v = i < tokens.length && !isCmd(tokens[i]) ? Number(tokens[i]) : NaN;
+    if (!Number.isFinite(v)) throw BAD;
+    return v;
+  };
+  // A command is a single letter; "1e5" is a number.
+  const isCmd = (t) => t.length === 1 && /[A-Za-z]/.test(t);
+  const isNum = (k) => k < tokens.length && !isCmd(tokens[k]);
 
   while (i < tokens.length) {
     const tok = tokens[i];
-    if (/[A-Za-z]/.test(tok)) cmd = tok;
-    else i -= 1;
-    if (!cmd) { i += 1; continue; }
+    if (isCmd(tok)) cmd = tok;
+    // A number with no command to repeat, or after Z (which takes none): skip it.
+    else if (!cmd || cmd === 'Z' || cmd === 'z') { i += 1; continue; } else i -= 1; // implicit repeat of the last command
     const rel = cmd === cmd.toLowerCase();
-    switch (cmd.toUpperCase()) {
-      case 'M': {
-        const nx = nextNum(); const ny = nextNum();
-        x = rel ? x + nx : nx; y = rel ? y + ny : ny;
-        startX = x; startY = y;
-        push(x, y);
-        cmd = rel ? 'l' : 'L';
-        lastControl = null;
-        break;
-      }
-      case 'L': {
-        const nx = nextNum(); const ny = nextNum();
-        x = rel ? x + nx : nx; y = rel ? y + ny : ny;
-        push(x, y); lastControl = null;
-        break;
-      }
-      case 'H': { const nx = nextNum(); x = rel ? x + nx : nx; push(x, y); lastControl = null; break; }
-      case 'V': { const ny = nextNum(); y = rel ? y + ny : ny; push(x, y); lastControl = null; break; }
-      case 'C': case 'S': {
-        let c1x; let c1y;
-        if (cmd.toUpperCase() === 'C') {
-          c1x = nextNum(); c1y = nextNum();
-          if (rel) { c1x += x; c1y += y; }
-        } else {
-          c1x = lastControl ? 2 * x - lastControl[0] : x;
-          c1y = lastControl ? 2 * y - lastControl[1] : y;
+    const C = cmd.toUpperCase();
+    if (C === 'Z') {
+      if (cur) {
+        // A closing segment back onto the start point would double it.
+        const v = cur.vertices;
+        const last = v[v.length - 1];
+        if (v.length > 1 && Math.abs(last[0] - v[0][0]) < 1e-9 && Math.abs(last[1] - v[0][1]) < 1e-9) {
+          cur.inTangents[0] = cur.inTangents[v.length - 1];
+          v.pop(); cur.inTangents.pop(); cur.outTangents.pop();
         }
-        let c2x = nextNum(); let c2y = nextNum();
-        let ex = nextNum(); let ey = nextNum();
-        if (rel) { c2x += x; c2y += y; ex += x; ey += y; }
-        outT[vertices.length - 1] = [c1x - x, c1y - y];
-        push(ex, ey);
-        inT[vertices.length - 1] = [c2x - ex, c2y - ey];
-        lastControl = [c2x, c2y];
-        x = ex; y = ey;
-        break;
+        cur.closed = true;
+        contours.push(cur);
+        cur = null;
       }
-      case 'Q': case 'T': {
-        let qx; let qy;
-        if (cmd.toUpperCase() === 'Q') {
-          qx = nextNum(); qy = nextNum();
-          if (rel) { qx += x; qy += y; }
-        } else {
-          qx = lastControl ? 2 * x - lastControl[0] : x;
-          qy = lastControl ? 2 * y - lastControl[1] : y;
+      x = startX; y = startY; lastCubic = null; lastQuad = null;
+      i += 1;
+      continue;
+    }
+    if (!isNum(i + 1)) { i += 1; continue; }
+    // A drawing command right after Z starts a new subpath at the old start.
+    if (C !== 'M') ensure();
+    try {
+      switch (C) {
+        case 'M': {
+          const nx = num(); const ny = num();
+          x = rel ? x + nx : nx; y = rel ? y + ny : ny;
+          startX = x; startY = y;
+          open(x, y);
+          cmd = rel ? 'l' : 'L'; // further pairs are line-tos
+          lastCubic = null; lastQuad = null;
+          break;
         }
-        let ex = nextNum(); let ey = nextNum();
-        if (rel) { ex += x; ey += y; }
-        // Exact degree elevation: a quadratic IS a cubic with these controls.
-        outT[vertices.length - 1] = [(2 / 3) * (qx - x), (2 / 3) * (qy - y)];
-        push(ex, ey);
-        inT[vertices.length - 1] = [(2 / 3) * (qx - ex), (2 / 3) * (qy - ey)];
-        lastControl = [qx, qy];
-        x = ex; y = ey;
-        break;
+        case 'L': {
+          const nx = num(); const ny = num();
+          x = rel ? x + nx : nx; y = rel ? y + ny : ny;
+          lineTo(x, y); lastCubic = null; lastQuad = null;
+          break;
+        }
+        case 'H': { const n = num(); x = rel ? x + n : n; lineTo(x, y); lastCubic = null; lastQuad = null; break; }
+        case 'V': { const n = num(); y = rel ? y + n : n; lineTo(x, y); lastCubic = null; lastQuad = null; break; }
+        case 'C': {
+          let c1x = num(); let c1y = num(); let c2x = num(); let c2y = num(); let ex = num(); let ey = num();
+          if (rel) { c1x += x; c1y += y; c2x += x; c2y += y; ex += x; ey += y; }
+          cubicTo(c1x, c1y, c2x, c2y, ex, ey);
+          lastCubic = [c2x, c2y]; lastQuad = null; x = ex; y = ey;
+          break;
+        }
+        case 'S': {
+          let c2x = num(); let c2y = num(); let ex = num(); let ey = num();
+          if (rel) { c2x += x; c2y += y; ex += x; ey += y; }
+          const c1x = lastCubic ? 2 * x - lastCubic[0] : x;
+          const c1y = lastCubic ? 2 * y - lastCubic[1] : y;
+          cubicTo(c1x, c1y, c2x, c2y, ex, ey);
+          lastCubic = [c2x, c2y]; lastQuad = null; x = ex; y = ey;
+          break;
+        }
+        case 'Q': case 'T': {
+          let qx; let qy;
+          if (C === 'Q') { qx = num(); qy = num(); if (rel) { qx += x; qy += y; } }
+          else { qx = lastQuad ? 2 * x - lastQuad[0] : x; qy = lastQuad ? 2 * y - lastQuad[1] : y; }
+          let ex = num(); let ey = num();
+          if (rel) { ex += x; ey += y; }
+          cubicTo(x + (2 / 3) * (qx - x), y + (2 / 3) * (qy - y), ex + (2 / 3) * (qx - ex), ey + (2 / 3) * (qy - ey), ex, ey);
+          lastQuad = [qx, qy]; lastCubic = null; x = ex; y = ey;
+          break;
+        }
+        case 'A': {
+          const rx = num(); const ry = num(); const rot = num(); const large = num(); const sweep = num();
+          let ex = num(); let ey = num();
+          if (rel) { ex += x; ey += y; }
+          for (const seg of arcToCubics(x, y, rx, ry, rot, large, sweep, ex, ey)) cubicTo(...seg);
+          lastCubic = null; lastQuad = null; x = ex; y = ey;
+          break;
+        }
+        default: break;
       }
-      case 'A': {
-        nextNum(); nextNum(); nextNum(); nextNum(); nextNum();
-        let ex = nextNum(); let ey = nextNum();
-        if (rel) { ex += x; ey += y; }
-        approximated.push('elliptical arc flattened to a straight segment');
-        push(ex, ey);
-        x = ex; y = ey; lastControl = null;
-        break;
-      }
-      case 'Z': { closed = true; x = startX; y = startY; break; }
-      default: break;
+    } catch (err) {
+      if (err !== BAD) throw err;
+      break;
     }
     i += 1;
   }
-  return { vertices, inTangents: inT, outTangents: outT, closed, approximated };
+  if (cur && cur.vertices.length) contours.push(cur);
+  // A lone moveto paints nothing.
+  return done(contours.filter((c) => c.vertices.length > 1 || c.closed));
+}
+
+/**
+ * An SVG elliptical arc (endpoint form) as cubic segments [c1x,c1y,c2x,c2y,x,y],
+ * per the SVG implementation notes (F.6.5 and F.6.6).
+ */
+export function arcToCubics(x1, y1, rxIn, ryIn, rotDeg, large, sweep, x2, y2) {
+  if (x1 === x2 && y1 === y2) return [];
+  let rx = Math.abs(rxIn); let ry = Math.abs(ryIn);
+  if (!rx || !ry) return [[x1, y1, x2, y2, x2, y2]];
+  const phi = (rotDeg * Math.PI) / 180;
+  const cos = Math.cos(phi); const sin = Math.sin(phi);
+  const dx = (x1 - x2) / 2; const dy = (y1 - y2) / 2;
+  const xp = cos * dx + sin * dy; const yp = -sin * dx + cos * dy;
+  const lambda = (xp * xp) / (rx * rx) + (yp * yp) / (ry * ry);
+  if (lambda > 1) { const s = Math.sqrt(lambda); rx *= s; ry *= s; }
+  const num = rx * rx * ry * ry - rx * rx * yp * yp - ry * ry * xp * xp;
+  const den = rx * rx * yp * yp + ry * ry * xp * xp;
+  let co = Math.sqrt(Math.max(0, num / den));
+  if (Boolean(large) === Boolean(sweep)) co = -co;
+  const cxp = (co * rx * yp) / ry; const cyp = (-co * ry * xp) / rx;
+  const cx = cos * cxp - sin * cyp + (x1 + x2) / 2;
+  const cy = sin * cxp + cos * cyp + (y1 + y2) / 2;
+  const ang = (ux, uy, vx, vy) => {
+    const a = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+    return a;
+  };
+  const t1 = ang(1, 0, (xp - cxp) / rx, (yp - cyp) / ry);
+  let dt = ang((xp - cxp) / rx, (yp - cyp) / ry, (-xp - cxp) / rx, (-yp - cyp) / ry);
+  if (!sweep && dt > 0) dt -= 2 * Math.PI;
+  if (sweep && dt < 0) dt += 2 * Math.PI;
+  const n = Math.max(1, Math.ceil(Math.abs(dt) / (Math.PI / 2) - 1e-9));
+  const step = dt / n;
+  const k = (4 / 3) * Math.tan(step / 4);
+  const point = (t) => [cx + rx * Math.cos(t) * cos - ry * Math.sin(t) * sin, cy + rx * Math.cos(t) * sin + ry * Math.sin(t) * cos];
+  const deriv = (t) => [-rx * Math.sin(t) * cos - ry * Math.cos(t) * sin, -rx * Math.sin(t) * sin + ry * Math.cos(t) * cos];
+  const out = [];
+  for (let s = 0; s < n; s += 1) {
+    const a = t1 + s * step; const b = a + step;
+    const pa = point(a); const pb = s === n - 1 ? [x2, y2] : point(b);
+    const da = deriv(a); const db = deriv(b);
+    out.push([pa[0] + k * da[0], pa[1] + k * da[1], pb[0] - k * db[0], pb[1] - k * db[1], pb[0], pb[1]]);
+  }
+  return out;
 }
 
 const KAPPA = 0.5522847498307936;
@@ -606,7 +699,22 @@ function geomToShape(p) {
     closed: isClosed, approximated: [],
   });
   if (p.tag === 'rect') {
-    return plain([[g.x, g.y], [g.x + g.width, g.y], [g.x + g.width, g.y + g.height], [g.x, g.y + g.height]], true);
+    // SVG: a missing rx or ry takes the other's value, and both clamp to half
+    // the side.
+    let rx = g.rx || g.ry || 0; let ry = g.ry || g.rx || 0;
+    rx = Math.min(rx, g.width / 2); ry = Math.min(ry, g.height / 2);
+    if (!(rx > 0 && ry > 0)) {
+      return plain([[g.x, g.y], [g.x + g.width, g.y], [g.x + g.width, g.y + g.height], [g.x, g.y + g.height]], true);
+    }
+    const { x, y, width: w, height: h } = g;
+    const kx = rx * KAPPA; const ky = ry * KAPPA;
+    return {
+      vertices: [[x + rx, y], [x + w - rx, y], [x + w, y + ry], [x + w, y + h - ry], [x + w - rx, y + h], [x + rx, y + h], [x, y + h - ry], [x, y + ry]],
+      inTangents: [[-kx, 0], [0, 0], [0, -ky], [0, 0], [kx, 0], [0, 0], [0, ky], [0, 0]],
+      outTangents: [[0, 0], [kx, 0], [0, 0], [0, ky], [0, 0], [-kx, 0], [0, 0], [0, -ky]],
+      closed: true,
+      approximated: [],
+    };
   }
   if (p.tag === 'line') return plain([[g.x1, g.y1], [g.x2, g.y2]], false);
   if (p.tag === 'polygon' || p.tag === 'polyline') {

@@ -26,12 +26,18 @@ function morphAt(morph, t) {
   const kb = keys[b];
   const f = kb.t > ka.t ? Math.min(1, Math.max(0, (t - ka.t) / (kb.t - ka.t))) : 1;
   const lerp = (pa, pb) => pa.map((v, i) => [v[0] + (pb[i][0] - v[0]) * f, v[1] + (pb[i][1] - v[1]) * f]);
-  const zeros = ka.vertices.map(() => [0, 0]);
   return {
-    vertices: lerp(ka.vertices, kb.vertices),
-    inTangents: morph.straight ? zeros : lerp(ka.inTangents, kb.inTangents),
-    outTangents: morph.straight ? zeros : lerp(ka.outTangents, kb.outTangents),
-    closed: morph.closed,
+    contours: morph.closed.map((closed, k) => {
+      const ca = ka.contours[k];
+      const cb = kb.contours[k];
+      const zeros = ca.vertices.map(() => [0, 0]);
+      return {
+        vertices: lerp(ca.vertices, cb.vertices),
+        inTangents: morph.straight ? zeros : lerp(ca.inTangents, cb.inTangents),
+        outTangents: morph.straight ? zeros : lerp(ca.outTangents, cb.outTangents),
+        closed,
+      };
+    }),
   };
 }
 import { pathFor } from './ir/clippath.mjs';
@@ -106,7 +112,8 @@ export function resolveAt(ir, t, { assetDir } = {}) {
           const g = l.path.morph ? morphAt(l.path.morph, t) : pathToShape(l.path);
           const off = ev(l.path.dashOffset, 0);
           out.path = {
-            vertices: g.vertices, inTangents: g.inTangents, outTangents: g.outTangents, closed: g.closed,
+            contours: g.contours,
+            fillRule: l.path.fillRule === 'evenodd' ? 'evenodd' : 'nonzero',
             strokeWidth: l.path.strokeWidth,
             strokeColor: ev(l.path.strokeColor, [0, 0, 0]),
             fill: l.path.fillColor && l.path.fillColor.a > 0 ? l.path.fillColor : null,
@@ -305,8 +312,9 @@ window.__aePreview = async function (scene) {
         if (s.stroke && s.stroke.width > 0) { t.lineWidth = s.stroke.width; t.strokeStyle = rgba(s.stroke.color, s.stroke.alpha); t.stroke(); }
       } else if (l.kind === 'path' && l.path) {
         var p = l.path;
-        t.beginPath(); tracePath(t, p);
-        if (p.fill) { t.fillStyle = rgba(p.fill.rgb, p.fill.a); t.fill(); }
+        t.beginPath();
+        for (var ci = 0; ci < p.contours.length; ci++) tracePath(t, p.contours[ci]);
+        if (p.fill) { t.fillStyle = rgba(p.fill.rgb, p.fill.a); t.fill(p.fillRule); }
         if (p.strokeWidth > 0) {
           t.lineWidth = p.strokeWidth; t.strokeStyle = rgba(p.strokeColor, 1);
           t.lineCap = p.lineCap || 'butt'; t.lineJoin = p.lineJoin || 'miter';
